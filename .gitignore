@@ -1,6 +1,7 @@
-# Coordination live-state (never commit)
+# Coordination / internal AI-dev tooling (not for the public repo)
 active_tasks.md
 active_files.md
+CLAUDE.md
 
 # Dependencies
 node_modules/

@@ -23,5 +23,15 @@ active_files.md
 docs/**
 CLAUDE.md
 
+# Secrets — NEVER package
+.env
+.env.*
+*.pat
+*.token
+*.pem
+*.key
+*secret*
+/txt
+
 # Misc
 **/.DS_Store
