@@ -30,7 +30,7 @@ export interface ComplexityOptions {
   spacesPerIndent?: number;
 }
 
-const DEFAULT_SPACES_PER_INDENT = 4;
+export const DEFAULT_SPACES_PER_INDENT = 4;
 
 /**
  * Logical indent of a single line:
@@ -39,8 +39,11 @@ const DEFAULT_SPACES_PER_INDENT = 4;
  * character). A tab counts as one full indent level regardless of
  * `spacesPerIndent`. Returns -1 for blank / whitespace-only lines so the caller
  * can skip them.
+ *
+ * Exported so the per-region code-risk core ({@link computeCodeRisk}) reuses the
+ * exact same indentation logic instead of forking a second copy (S6-B1).
  */
-function lineIndent(line: string, spacesPerIndent: number): number {
+export function lineIndent(line: string, spacesPerIndent: number): number {
   let spaces = 0;
   let tabs = 0;
   let i = 0;
