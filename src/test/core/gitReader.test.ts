@@ -18,6 +18,8 @@ import {
   readChurnWithCoupling,
   buildGitLogArgs,
   resolveRenamePath,
+  RECENCY_HALF_LIFE_MS,
+  RECENT_WINDOW_MS,
   type GitLogRunner,
 } from '../../core/gitReader';
 import { coChangeKey } from '../../core/types';
@@ -217,6 +219,12 @@ describe('readChurn (real git spawn — exercises the default runner end-to-end)
       expect(churn.bugfixCommits).toBeLessThanOrEqual(churn.commits);
       // real commits have parseable dates
       expect(Number.isNaN(Date.parse(churn.lastSeen))).toBe(false);
+      // S7-B1 recency: weight is positive (every file has ≥1 dated commit) and
+      // recentCommits is a sane subset of the commit count.
+      expect(typeof churn.recencyWeight).toBe('number');
+      expect(churn.recencyWeight).toBeGreaterThan(0);
+      expect(churn.recentCommits).toBeGreaterThanOrEqual(0);
+      expect(churn.recentCommits).toBeLessThanOrEqual(churn.commits);
     }
   });
 });
@@ -271,6 +279,102 @@ describe('readChurnWithCoupling (streamed via injected runner)', () => {
     );
     expect(churn).toEqual(await readChurn({ repoRoot: '/unused' }, chunkedRunner(FIXTURE, 7)));
     expect(coChange.get(coChangeKey('src/core/gitReader.ts', 'src/core/types.ts'))).toBe(1);
+  });
+});
+
+describe('recency + trend (S7-B1)', () => {
+  // Build a NUL-separated `git log --numstat` blob (newest-first, as git emits).
+  // Each commit: header `sha NUL author NUL dateISO NUL subject`, blank line,
+  // then numstat rows `added\tdeleted\tpath`, blank line.
+  function buildLog(
+    commits: Array<{ date: string; rows: Array<[number | '-', number | '-', string]> }>,
+  ): string {
+    return commits
+      .map(({ date, rows }, i) => {
+        const header = `${'a'.repeat(40 - 1)}${i}${NUL}Dev${NUL}${date}${NUL}edit`;
+        const body = rows.map(([a, d, p]) => `${a}\t${d}\t${p}`).join('\n');
+        return `${header}\n\n${body}\n`;
+      })
+      .join('\n');
+  }
+
+  it('exports the half-life (365d) and recent window (90d) as ms constants', () => {
+    expect(RECENCY_HALF_LIFE_MS).toBe(365 * 24 * 60 * 60 * 1000);
+    expect(RECENT_WINDOW_MS).toBe(90 * 24 * 60 * 60 * 1000);
+  });
+
+  it('uses the newest commit (first finite %aI) as the decay reference', () => {
+    // Reference = 2027-01-01 (newest, listed first). A commit exactly one
+    // half-life (365d) earlier = 2026-01-01 → weight 0.5; the newest → weight 1.
+    const log = buildLog([
+      { date: '2027-01-01T00:00:00+00:00', rows: [[1, 0, 'foo.ts']] },
+      { date: '2026-01-01T00:00:00+00:00', rows: [[1, 0, 'foo.ts']] },
+    ]);
+    const foo = expectChurn(parseGitLog(log), 'foo.ts');
+    expect(foo.commits).toBe(2);
+    expect(foo.recencyWeight).toBeCloseTo(1.5, 6); // 0.5^0 + 0.5^1
+  });
+
+  it('counts only commits within 90 days of the reference as recentCommits', () => {
+    const log = buildLog([
+      { date: '2027-01-01T00:00:00+00:00', rows: [[1, 0, 'foo.ts']] }, // age 0   → recent
+      { date: '2026-12-02T00:00:00+00:00', rows: [[1, 0, 'foo.ts']] }, // age 30d → recent
+      { date: '2026-01-01T00:00:00+00:00', rows: [[1, 0, 'foo.ts']] }, // age 365d → NOT recent
+    ]);
+    const foo = expectChurn(parseGitLog(log), 'foo.ts');
+    expect(foo.commits).toBe(3);
+    expect(foo.recentCommits).toBe(2);
+    // 1 + 0.5^(30/365) + 0.5 ≈ 2.4446
+    expect(foo.recencyWeight).toBeCloseTo(1 + Math.pow(0.5, 30 / 365) + 0.5, 6);
+  });
+
+  it('clamps age at 0 so a commit newer than the reference never exceeds weight 1', () => {
+    // Reference is the FIRST commit (2026-06-01); a later-listed commit dated
+    // AFTER it (clock skew / non-monotonic history) gets age clamped to 0.
+    const log = buildLog([
+      { date: '2026-06-01T00:00:00+00:00', rows: [[1, 0, 'foo.ts']] },
+      { date: '2026-07-01T00:00:00+00:00', rows: [[1, 0, 'foo.ts']] }, // newer than ref
+    ]);
+    const foo = expectChurn(parseGitLog(log), 'foo.ts');
+    expect(foo.recencyWeight).toBeCloseTo(2, 6); // both clamp to weight 1
+    expect(foo.recentCommits).toBe(2);
+  });
+
+  it('contributes 0 recency for a commit with an unparseable date', () => {
+    const log =
+      `aaa${NUL}Dev${NUL}2026-06-01T00:00:00+00:00${NUL}edit\n\n1\t0\tfoo.ts\n\n` +
+      `bbb${NUL}Dev${NUL}not-a-date${NUL}edit\n\n1\t0\tfoo.ts\n`;
+    const foo = expectChurn(parseGitLog(log), 'foo.ts');
+    expect(foo.commits).toBe(2);
+    expect(foo.recencyWeight).toBeCloseTo(1, 6); // only the dated commit counts
+    expect(foo.recentCommits).toBe(1);
+  });
+
+  it('falls back to the first PARSEABLE date as reference when the newest is unparseable', () => {
+    // Newest commit has a bad date → referenceMs stays unset for its rows (they
+    // contribute 0), then the next finite date becomes the reference.
+    const log =
+      `aaa${NUL}Dev${NUL}garbage${NUL}edit\n\n1\t0\tfoo.ts\n\n` +
+      `bbb${NUL}Dev${NUL}2026-06-01T00:00:00+00:00${NUL}edit\n\n1\t0\tfoo.ts\n`;
+    const foo = expectChurn(parseGitLog(log), 'foo.ts');
+    expect(foo.commits).toBe(2);
+    // bad-date commit → 0; the reference commit itself → age 0 → weight 1.
+    expect(foo.recencyWeight).toBeCloseTo(1, 6);
+    expect(foo.recentCommits).toBe(1);
+  });
+
+  it('streams to the same recency values across chunk sizes', async () => {
+    const log = buildLog([
+      { date: '2027-01-01T00:00:00+00:00', rows: [[1, 0, 'foo.ts']] },
+      { date: '2026-01-01T00:00:00+00:00', rows: [[1, 0, 'foo.ts']] },
+    ]);
+    for (const size of [1, 5, 64]) {
+      const foo = expectChurn(
+        await readChurn({ repoRoot: '/unused' }, chunkedRunner(log, size)),
+        'foo.ts',
+      );
+      expect(foo.recencyWeight).toBeCloseTo(1.5, 6);
+    }
   });
 });
 

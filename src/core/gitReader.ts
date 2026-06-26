@@ -19,6 +19,20 @@ import type { ChurnMap, CoChangeCount, FileChurn, GitReaderOptions } from './typ
 export const MAX_FILES_PER_COMMIT = 50;
 
 /**
+ * Half-life of the time-decay recency weight (S7-B1): a commit `RECENCY_HALF_LIFE_MS`
+ * older than the reference date contributes half the weight of a commit on the
+ * reference date (`0.5 ^ (age / halfLife)`). 365 days — one year halves a file's
+ * recency contribution (RESEARCH §1 "code age / recency").
+ */
+export const RECENCY_HALF_LIFE_MS = 365 * 24 * 60 * 60 * 1000;
+
+/**
+ * Recency window for the display-only trend signal (S7-B1): commits within this
+ * span back from the reference date count toward `recentCommits`. 90 days.
+ */
+export const RECENT_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
+
+/**
  * Produces the raw `git log` stdout as a sequence of UTF-8 chunks. Chunk
  * boundaries are arbitrary (they may split a line), which is exactly what the
  * line buffering in {@link readChurn} is built to tolerate. Tests inject a
@@ -133,6 +147,8 @@ interface ChurnAcc {
   firstSeen: string;
   lastSeenMs: number;
   lastSeen: string;
+  recencyWeight: number;
+  recentCommits: number;
 }
 
 interface CommitCtx {
@@ -147,6 +163,13 @@ interface CommitCtx {
 class ChurnAggregator {
   private readonly accs = new Map<string, ChurnAcc>();
   private current: CommitCtx | null = null;
+
+  // Reference timestamp for time-decay recency (S7-B1): the first FINITE commit
+  // date seen. `git log` is newest-first, so the first parseable date is the
+  // newest commit in the walk → recency is measured back from "now" (relative to
+  // HEAD) deterministically, not from wall-clock time. Stays null until a commit
+  // with a parseable %aI is encountered; commits seen before that contribute 0.
+  private referenceMs: number | null = null;
 
   // Change-coupling state (only populated when `trackCoChange`): the distinct
   // paths touched by the commit currently being parsed, flushed into pairwise
@@ -170,12 +193,17 @@ class ChurnAggregator {
       // New commit header → close out the previous commit's co-change pairs.
       this.flushCoChange();
       const [, author = '', date = '', subject = ''] = line.split(NUL);
+      const dateMs = Date.parse(date);
       this.current = {
         author,
         date,
-        dateMs: Date.parse(date),
+        dateMs,
         isBugfix: isBugfixCommit(subject),
       };
+      // Newest-first walk: the first parseable date is the reference ("now").
+      if (this.referenceMs === null && Number.isFinite(dateMs)) {
+        this.referenceMs = dateMs;
+      }
       if (this.trackCoChange) {
         this.currentFiles = new Set();
       }
@@ -216,6 +244,8 @@ class ChurnAggregator {
         firstSeen: '',
         lastSeenMs: -Infinity,
         lastSeen: '',
+        recencyWeight: 0,
+        recentCommits: 0,
       };
       this.accs.set(path, acc);
     }
@@ -239,6 +269,17 @@ class ChurnAggregator {
       if (ctx.dateMs > acc.lastSeenMs) {
         acc.lastSeenMs = ctx.dateMs;
         acc.lastSeen = ctx.date;
+      }
+      // Time-decay recency (S7-B1). Age is clamped at 0 so a commit dated after
+      // the reference (clock skew / non-monotonic history) never exceeds weight 1.
+      // Needs a known reference; commits seen before the first parseable date
+      // contribute 0 (referenceMs still null).
+      if (this.referenceMs !== null) {
+        const ageMs = Math.max(0, this.referenceMs - ctx.dateMs);
+        acc.recencyWeight += Math.pow(0.5, ageMs / RECENCY_HALF_LIFE_MS);
+        if (ageMs <= RECENT_WINDOW_MS) {
+          acc.recentCommits += 1;
+        }
       }
     }
   }
@@ -287,6 +328,8 @@ class ChurnAggregator {
         authorCommits: [...acc.authorCommits].map(([name, commits]) => ({ name, commits })),
         firstSeen: acc.firstSeen,
         lastSeen: acc.lastSeen,
+        recencyWeight: acc.recencyWeight,
+        recentCommits: acc.recentCommits,
       };
       map.set(path, churn);
     }

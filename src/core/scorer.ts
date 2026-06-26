@@ -9,6 +9,9 @@
 // Active additive-core signals (RESEARCH §3.6 weighted model, weights sum to 1):
 //   - freq            → commits touching the file.
 //   - churn           → lines added + deleted.
+//   - recency         → time-decay recency weight (FileChurn.recencyWeight, S7-B1):
+//                       Σ 0.5^(ageDays/365) back from the newest commit, so
+//                       recently-churned files rank higher (RESEARCH §1 code age).
 //   - authors         → distinct-author COUNT (`authors.length`).
 //   - ownership       → ownership fragmentation `1 − topShare` (ownership.ts), its
 //                       OWN weighted term as of S4-B1 (was borrowing the author
@@ -28,6 +31,16 @@ import type { ComplexityResult } from './complexity';
 
 export type RiskTier = 'low' | 'medium' | 'high' | 'critical';
 
+/**
+ * Display-only momentum classification (S7-B1), derived from the share of a
+ * file's commits that fall inside the recency window (`recentCommits / commits`):
+ *   - `rising`  → ≥ 50% of commits are recent AND ≥ 3 commits (enough history)
+ *   - `cooling` → ≤ 10% of commits are recent
+ *   - `stable`  → in between / too little history
+ * NOT a scored signal — it annotates the result for UI badges.
+ */
+export type RiskTrend = 'rising' | 'stable' | 'cooling';
+
 export interface RiskResult {
   /** Repo-relative path (matches the ChurnMap key). */
   path: string;
@@ -39,6 +52,8 @@ export interface RiskResult {
    * RAW (pre-normalization) signal values, for display / debugging:
    *   freq       = number of commits touching the file
    *   churn      = linesAdded + linesDeleted
+   *   recency    = time-decay recency weight `Σ 0.5^(ageDays/365)` (FileChurn.
+   *                recencyWeight); 0 when the file has no parseable-dated commits
    *   authors    = number of distinct authors
    *   ownership  = ownership fragmentation `1 − topAuthorShare` in [0, 1); 0 when
    *                no `ownership` map was supplied
@@ -49,17 +64,25 @@ export interface RiskResult {
   signals: {
     freq: number;
     churn: number;
+    recency: number;
     authors: number;
     ownership: number;
     coupling: number;
     complexity: number;
   };
+  /**
+   * Momentum classification (S7-B1) from `recentCommits / commits`. Display-only
+   * (status-bar/tree badges) — does NOT affect `score`. See {@link RiskTrend}.
+   */
+  trend: RiskTrend;
 }
 
 /** Relative weights of the additive process-metric core. Defaults sum to 1. */
 export interface ScoreWeights {
   freq: number;
   churn: number;
+  /** Time-decay recency term (S7-B1): recently-churned files rank higher. */
+  recency: number;
   authors: number;
   ownership: number;
   coupling: number;
@@ -102,12 +125,14 @@ export interface ScoreOptions {
   coupling?: Map<string, number>;
 }
 
-// RESEARCH §3.6 weighted model (sum = 1.0). S4-B1 rebalanced the S4-A defaults
-// (0.45/0.35/0.2) to split ownership + coupling into their own terms.
+// RESEARCH §3.6 weighted model (sum = 1.0). S4-B1 split ownership + coupling into
+// their own terms; S7-B1 added the recency term and rebalanced freq/churn/authors
+// down to make room (0.30/0.25/0.15 → 0.22/0.18/0.10) while keeping the sum 1.0.
 const DEFAULT_WEIGHTS: ScoreWeights = {
-  freq: 0.3,
-  churn: 0.25,
-  authors: 0.15,
+  freq: 0.22,
+  churn: 0.18,
+  recency: 0.2,
+  authors: 0.1,
   ownership: 0.15,
   coupling: 0.15,
 };
@@ -145,6 +170,19 @@ function toTier(score: number, t: ScoreThresholds): RiskTier {
 }
 
 /**
+ * Classify a file's momentum from its recent-commit share (S7-B1). `rising`
+ * needs both a majority-recent history AND enough commits to be meaningful;
+ * `cooling` is a near-dormant file; everything else is `stable`. Pure +
+ * display-only — never feeds the score.
+ */
+function toTrend(recentCommits: number, commits: number): RiskTrend {
+  const ratio = commits > 0 ? recentCommits / commits : 0;
+  if (ratio >= 0.5 && commits >= 3) return 'rising';
+  if (ratio <= 0.1) return 'cooling';
+  return 'stable';
+}
+
+/**
  * Compute per-file risk scores from churn + complexity, sorted descending by
  * score (ties broken by path for determinism). Pure function of its inputs.
  *
@@ -172,6 +210,7 @@ export function computeRisk(
   // an absent signal map ⇒ that raw value is 0 ⇒ after normalize the term is 0.
   const rawFreq: number[] = [];
   const rawChurn: number[] = [];
+  const rawRecency: number[] = [];
   const rawAuthors: number[] = [];
   const rawOwnership: number[] = [];
   const rawCoupling: number[] = [];
@@ -180,6 +219,9 @@ export function computeRisk(
     const fc = churn.get(path)!;
     rawFreq.push(fc.commits);
     rawChurn.push(fc.linesAdded + fc.linesDeleted);
+    // `?? 0`: a pre-S7-B1 cache or hand-built FileChurn may lack recencyWeight ⇒
+    // 0 ⇒ after normalize the recency term contributes nothing (forward-compat).
+    rawRecency.push(fc.recencyWeight ?? 0);
     rawAuthors.push(fc.authors.length);
     rawOwnership.push(ownership?.get(path) ?? 0);
     rawCoupling.push(coupling?.get(path) ?? 0);
@@ -188,15 +230,18 @@ export function computeRisk(
 
   const nFreq = normalize(rawFreq);
   const nChurn = normalize(rawChurn);
+  const nRecency = normalize(rawRecency);
   const nAuthors = normalize(rawAuthors);
   const nOwnership = normalize(rawOwnership);
   const nCoupling = normalize(rawCoupling);
   const nComplexity = normalize(rawComplexity);
 
   const results: RiskResult[] = paths.map((path, i) => {
+    const fc = churn.get(path)!;
     const core =
       weights.freq * nFreq[i] +
       weights.churn * nChurn[i] +
+      weights.recency * nRecency[i] +
       weights.authors * nAuthors[i] +
       weights.ownership * nOwnership[i] +
       weights.coupling * nCoupling[i];
@@ -213,11 +258,13 @@ export function computeRisk(
       signals: {
         freq: rawFreq[i],
         churn: rawChurn[i],
+        recency: rawRecency[i],
         authors: rawAuthors[i],
         ownership: rawOwnership[i],
         coupling: rawCoupling[i],
         complexity: rawComplexity[i],
       },
+      trend: toTrend(fc.recentCommits ?? 0, fc.commits),
     };
   });
 

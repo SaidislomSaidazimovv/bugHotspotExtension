@@ -13,6 +13,10 @@ interface ChurnSpec {
   added: number;
   deleted: number;
   authors: number;
+  /** Raw time-decay recency weight (FileChurn.recencyWeight); default 0. */
+  recency?: number;
+  /** Commits inside the recency window (FileChurn.recentCommits); default 0. */
+  recentCommits?: number;
 }
 
 function churnMap(specs: ChurnSpec[]): ChurnMap {
@@ -26,7 +30,9 @@ function churnMap(specs: ChurnSpec[]): ChurnMap {
       authors: Array.from({ length: s.authors }, (_, i) => `dev${i}`),
       firstSeen: '2026-01-01T00:00:00+00:00',
       lastSeen: '2026-01-02T00:00:00+00:00',
-    };
+      recencyWeight: s.recency ?? 0,
+      recentCommits: s.recentCommits ?? 0,
+    } as FileChurn;
     map.set(s.path, fc);
   }
   return map;
@@ -98,6 +104,7 @@ describe('computeRisk — raw signals', () => {
     expect(byPath.get('x.ts')!.signals).toEqual({
       freq: 7,
       churn: 150, // 120 + 30
+      recency: 0, // no recencyWeight on the helper-built churn → reported as 0
       authors: 4,
       ownership: 0, // no ownership map supplied → fragmentation reported as 0
       coupling: 0, // no coupling map supplied → strength reported as 0
@@ -145,13 +152,14 @@ describe('computeRisk — edge cases', () => {
 });
 
 describe('computeRisk — tiers', () => {
-  // To hit score 100 under the 5-term model (weights sum to 1.0), the top file
-  // must max ALL FIVE additive terms — so ownership + coupling maps are supplied
-  // alongside the freq/churn/authors/complexity spread. Drive thresholds around
-  // that known score to exercise every boundary.
+  // To hit score 100 under the 6-term model (weights sum to 1.0), the top file
+  // must max ALL SIX additive terms — so ownership + coupling maps are supplied
+  // alongside the freq/churn/recency/authors/complexity spread (recency comes
+  // from FileChurn.recencyWeight). Drive thresholds around that known score to
+  // exercise every boundary.
   const churn = churnMap([
-    { path: 'top.ts', commits: 50, added: 900, deleted: 500, authors: 6 },
-    { path: 'bottom.ts', commits: 1, added: 1, deleted: 0, authors: 1 },
+    { path: 'top.ts', commits: 50, added: 900, deleted: 500, authors: 6, recency: 50 },
+    { path: 'bottom.ts', commits: 1, added: 1, deleted: 0, authors: 1, recency: 0 },
   ]);
   const cxm = complexityMap({ 'top.ts': 900, 'bottom.ts': 1 });
   const maxed: ScoreOptions = {
@@ -287,6 +295,78 @@ describe('computeRisk — change-coupling signal (S4-B1)', () => {
     });
     // Symmetric contributions ⇒ equal scores ⇒ deterministic path-order tie-break.
     expect(byPath.get('lonely.ts')!.score).toBe(byPath.get('coupled.ts')!.score);
+  });
+});
+
+describe('computeRisk — recency signal (S7-B1)', () => {
+  // Identical files except for the recency weight → it is the only discriminator.
+  const churn = churnMap([
+    { path: 'stale.ts', commits: 10, added: 100, deleted: 50, authors: 3, recency: 0.5 },
+    { path: 'fresh.ts', commits: 10, added: 100, deleted: 50, authors: 3, recency: 10 },
+  ]);
+  const cxm = complexityMap({ 'stale.ts': 100, 'fresh.ts': 100 });
+
+  it('raises the more recently-changed file above a stale one', () => {
+    const { results } = run(churn, cxm);
+    expect(results[0].path).toBe('fresh.ts');
+    expect(results[0].score).toBeGreaterThan(results[1].score);
+  });
+
+  it('surfaces the raw recency weight in signals.recency', () => {
+    const { byPath } = run(churn, cxm);
+    expect(byPath.get('fresh.ts')!.signals.recency).toBe(10);
+    expect(byPath.get('stale.ts')!.signals.recency).toBe(0.5);
+  });
+
+  it('treats a missing recencyWeight as 0 (forward-compat, no throw)', () => {
+    // Simulate a pre-S7-B1 / hand-built FileChurn with no recency fields.
+    const legacy: ChurnMap = new Map([
+      ['a.ts', { path: 'a.ts', commits: 5, bugfixCommits: 0, linesAdded: 10, linesDeleted: 2, authors: ['x'], authorCommits: [{ name: 'x', commits: 5 }], firstSeen: '', lastSeen: '' } as unknown as FileChurn],
+      ['b.ts', { path: 'b.ts', commits: 2, bugfixCommits: 0, linesAdded: 3, linesDeleted: 1, authors: ['y'], authorCommits: [{ name: 'y', commits: 2 }], firstSeen: '', lastSeen: '' } as unknown as FileChurn],
+    ]);
+    const { byPath } = run(legacy, complexityMap({ 'a.ts': 50, 'b.ts': 10 }));
+    expect(byPath.get('a.ts')!.signals.recency).toBe(0);
+    expect(byPath.get('a.ts')!.trend).toBe('cooling'); // recentCommits ?? 0 → ratio 0
+  });
+});
+
+describe('computeRisk — trend classification (S7-B1, display-only)', () => {
+  const cxm = complexityMap({});
+
+  function trendOf(commits: number, recentCommits: number): string {
+    const churn = churnMap([{ path: 'f.ts', commits, added: 1, deleted: 0, authors: 1, recentCommits }]);
+    return run(churn, cxm).byPath.get('f.ts')!.trend;
+  }
+
+  it('classifies a majority-recent, well-exercised file as rising', () => {
+    expect(trendOf(4, 3)).toBe('rising'); // 3/4 = 0.75 ≥ 0.5, commits ≥ 3
+    expect(trendOf(3, 3)).toBe('rising'); // 3/3 = 1.0
+  });
+
+  it('does NOT call a majority-recent file rising without ≥3 commits', () => {
+    expect(trendOf(2, 2)).toBe('stable'); // ratio 1.0 but only 2 commits
+  });
+
+  it('classifies a near-dormant file as cooling', () => {
+    expect(trendOf(20, 2)).toBe('cooling'); // 2/20 = 0.1 ≤ 0.1
+    expect(trendOf(10, 0)).toBe('cooling'); // 0/10 = 0
+  });
+
+  it('classifies an in-between file as stable', () => {
+    expect(trendOf(10, 3)).toBe('stable'); // 0.3 — between 0.1 and 0.5
+  });
+
+  it('is display-only: trend does not change the score', () => {
+    // Two files identical in every SCORED signal but differing recentCommits.
+    const churn = churnMap([
+      { path: 'p.ts', commits: 10, added: 100, deleted: 50, authors: 3, recency: 5, recentCommits: 9 },
+      { path: 'q.ts', commits: 10, added: 100, deleted: 50, authors: 3, recency: 5, recentCommits: 0 },
+    ]);
+    const cx = complexityMap({ 'p.ts': 100, 'q.ts': 100 });
+    const { byPath } = run(churn, cx);
+    expect(byPath.get('p.ts')!.score).toBe(byPath.get('q.ts')!.score);
+    expect(byPath.get('p.ts')!.trend).toBe('rising');
+    expect(byPath.get('q.ts')!.trend).toBe('cooling');
   });
 });
 

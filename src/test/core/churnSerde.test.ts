@@ -29,6 +29,8 @@ function sampleMap(): ChurnMap {
       ],
       firstSeen: '2026-06-20T14:00:00+09:00',
       lastSeen: '2026-06-20T10:00:00+00:00',
+      recencyWeight: 1.5,
+      recentCommits: 2,
     },
     {
       path: 'README.md',
@@ -40,6 +42,8 @@ function sampleMap(): ChurnMap {
       authorCommits: [{ name: 'Carol Lee', commits: 1 }],
       firstSeen: '2026-06-01T12:00:00+00:00',
       lastSeen: '2026-06-01T12:00:00+00:00',
+      recencyWeight: 0.5,
+      recentCommits: 0,
     },
   ];
   return new Map(files.map((f) => [f.path, f]));
@@ -78,16 +82,19 @@ describe('serializeChurn / deserializeChurn', () => {
     ]);
     // S4-B1: co-change counts survive (NUL-separated keys included).
     expect(restored.coChange.get(coChangeKey('src/core/gitReader.ts', 'src/core/types.ts'))).toBe(9);
+    // S7-B1: recency fields survive the JSON round-trip.
+    expect(restored.churn.get('src/core/gitReader.ts')?.recencyWeight).toBe(1.5);
+    expect(restored.churn.get('src/core/gitReader.ts')?.recentCommits).toBe(2);
   });
 
-  it('stamps schema version 3 (S4-B1 co-change bump)', () => {
-    expect(CHURN_SERDE_VERSION).toBe(3);
-    expect(serializeChurn(sampleMap(), sampleCoChange()).version).toBe(3);
+  it('stamps schema version 4 (S7-B1 recency bump)', () => {
+    expect(CHURN_SERDE_VERSION).toBe(4);
+    expect(serializeChurn(sampleMap(), sampleCoChange()).version).toBe(4);
   });
 
-  it('cache-busts a v2 entry (no coChange) to empty maps → cold scan', () => {
-    const v2 = {
-      version: 2,
+  it('cache-busts a v3 entry (no recency fields) to empty maps → cold scan', () => {
+    const v3 = {
+      version: 3,
       files: [
         {
           path: 'old.ts',
@@ -101,10 +108,22 @@ describe('serializeChurn / deserializeChurn', () => {
           lastSeen: '2026-01-02T00:00:00+00:00',
         },
       ],
+      coChange: [],
     } as unknown as SerializedChurnMap;
-    const { churn, coChange } = deserializeChurn(v2);
+    const { churn, coChange } = deserializeChurn(v3);
     expect(churn.size).toBe(0);
     expect(coChange.size).toBe(0);
+  });
+
+  it('defaults missing recency fields to 0 on a same-version malformed row', () => {
+    const wire = {
+      version: CHURN_SERDE_VERSION,
+      files: [{ path: 'x.ts', commits: 1, authors: ['A'], authorCommits: [{ name: 'A', commits: 1 }] }],
+      coChange: [],
+    } as unknown as SerializedChurnMap;
+    const fc = deserializeChurn(wire).churn.get('x.ts');
+    expect(fc?.recencyWeight).toBe(0);
+    expect(fc?.recentCommits).toBe(0);
   });
 
   it('defaults a missing authorCommits to [] on deserialize (defensive)', () => {

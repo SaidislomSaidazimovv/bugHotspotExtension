@@ -36,6 +36,24 @@ export interface FileChurn {
   firstSeen: string;
   /** ISO-8601 date of the most recent commit touching this path. */
   lastSeen: string;
+  /**
+   * Time-decayed recency weight (S7-B1, RESEARCH §1 "code age / recency"):
+   * the sum over this file's commits of `0.5 ^ (ageDays / 365)`, where `age` is
+   * measured back from the newest commit in the walk (the reference date — see
+   * {@link readChurn}). A commit on the reference date contributes 1; one a year
+   * older contributes 0.5; etc. Recently-touched files therefore score higher.
+   * Commits with an unparseable date contribute 0. Additive + serializable;
+   * powers the `recency` term of the risk score.
+   */
+  recencyWeight: number;
+  /**
+   * Count of this file's commits within the recency window (90 days back from
+   * the reference date — see {@link readChurn}). `recentCommits / commits` is the
+   * input to the display-only trend classification (`rising | stable | cooling`,
+   * S7-B1); it is NOT a scored signal. Commits with an unparseable date are not
+   * counted. Additive + serializable.
+   */
+  recentCommits: number;
 }
 
 /**

@@ -12,7 +12,7 @@ import { type ChurnMap, type CoChangeCount, type FileChurn } from './types';
 
 /** JSON-safe representation of the churn cache, with a version for cache busting. */
 export interface SerializedChurnMap {
-  version: 3;
+  version: 4;
   files: FileChurn[];
   /** `[...CoChangeCount.entries()]` — pairwise co-change counts (S4-B1). */
   coChange: Array<[string, number]>;
@@ -23,9 +23,11 @@ export interface SerializedChurnMap {
 //   2 → 3  (S4-B1): cache now also stores `coChange` (change-coupling). A churn
 //          cache-hit must NOT skip the git pass and lose co-change, so the whole
 //          { churn, coChange } pair is persisted together.
+//   3 → 4  (S7-B1): FileChurn gained `recencyWeight` + `recentCommits` (time-decay
+//          recency + trend). A v3 entry lacks these, so it busts to a cold scan.
 // An older-version entry fails the version check below → deserialize returns
 // empty maps and the host falls back to a cold scan (no throw).
-export const CHURN_SERDE_VERSION = 3 as const;
+export const CHURN_SERDE_VERSION = 4 as const;
 
 /** The deserialized churn cache: the ChurnMap plus its co-change counts. */
 export interface DeserializedChurn {
@@ -60,12 +62,17 @@ export function deserializeChurn(
   }
   for (const file of data.files) {
     if (file && typeof file.path === 'string') {
-      // Defensive default: a v3 entry should carry `authorCommits`, but guard a
-      // partially-written / hand-edited cache so ownership code never sees
-      // `undefined` (ownershipStats then reports zero fragmentation).
+      // Defensive defaults: a current-version entry should carry these, but guard
+      // a partially-written / hand-edited cache so downstream code never sees
+      // `undefined`. `authorCommits` → [] (ownershipStats reports zero
+      // fragmentation); `recencyWeight`/`recentCommits` → 0 (recency term + trend
+      // degrade to no-signal). Cache-version mismatch already cold-scans; this is
+      // belt-and-braces for a same-version-but-malformed row.
       churn.set(file.path, {
         ...file,
         authorCommits: Array.isArray(file.authorCommits) ? file.authorCommits : [],
+        recencyWeight: typeof file.recencyWeight === 'number' ? file.recencyWeight : 0,
+        recentCommits: typeof file.recentCommits === 'number' ? file.recentCommits : 0,
       });
     }
   }
