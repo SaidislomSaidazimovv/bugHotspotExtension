@@ -34,8 +34,22 @@
         "title": "Show Top Hotspots",
         "category": "Hotspot",
         "icon": "$(flame)"
+      },
+      {
+        "command": "hotspot.showCoupledFiles",
+        "title": "Show Coupled Files",
+        "category": "Hotspot",
+        "icon": "$(git-merge)"
       }
     ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "hotspot.showCoupledFiles",
+          "group": "hotspot"
+        }
+      ]
+    },
     "colors": [
       {
         "id": "hotspot.tierCritical",
