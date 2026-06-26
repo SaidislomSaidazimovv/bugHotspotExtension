@@ -52,9 +52,10 @@ suite('Top Hotspots command (integration)', () => {
     assert.ok(results.length > 0, 'workspace scan should yield ranked files');
 
     // Capture the offered items and auto-select the first (top-ranked) one.
-    let offered: Array<{ result: RiskResult }> = [];
+    type OfferedPick = vscode.QuickPickItem & { result: RiskResult };
+    let offered: OfferedPick[] = [];
     (vscode.window as { showQuickPick: unknown }).showQuickPick = async (
-      items: Array<{ result: RiskResult }>,
+      items: OfferedPick[],
     ) => {
       offered = await Promise.resolve(items);
       return offered[0];
@@ -75,6 +76,19 @@ suite('Top Hotspots command (integration)', () => {
       results[0].path,
       'first item should be the top-ranked file',
     );
+
+    // Signal parity with the Risk Report panel: description shows all 5 signals,
+    // including ownership + coupling (added after S4-C's original description).
+    const desc = offered[0].description ?? '';
+    assert.match(desc, /commits \d+/, 'description shows commits');
+    assert.match(desc, /authors \d+/, 'description shows authors');
+    assert.match(desc, /ownership \d+% fragmented/, 'description shows ownership');
+    assert.match(desc, /coupling \d+%/, 'description shows coupling');
+    assert.match(desc, /complexity \d+/, 'description shows complexity');
+
+    // Each item carries a plain-language explanation of the risk.
+    const detail = offered[0].detail ?? '';
+    assert.match(detail, /Changed \d+× by \d+ author/, 'detail explains change activity');
 
     // Selecting the first item opens the corresponding file.
     const active = vscode.window.activeTextEditor;

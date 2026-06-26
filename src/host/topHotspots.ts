@@ -16,13 +16,45 @@ interface HotspotPick extends vscode.QuickPickItem {
   result: RiskResult;
 }
 
+/**
+ * Plain-language summary of *why* a file is risky, built from its dominant
+ * signals — so the Quick Pick explains the risk instead of just listing numbers.
+ * Ownership/coupling are fractions in [0, 1); the rest are raw counts.
+ */
+function explain(result: RiskResult): string {
+  const s = result.signals;
+  const parts: string[] = [
+    `Changed ${s.freq}× by ${s.authors} author${s.authors === 1 ? '' : 's'}`,
+  ];
+  if (s.ownership >= 0.6) {
+    parts.push('fragmented ownership');
+  } else if (s.ownership >= 0.3) {
+    parts.push('shared ownership');
+  }
+  if (s.coupling >= 0.6) {
+    parts.push('strongly coupled to other files');
+  } else if (s.coupling >= 0.3) {
+    parts.push('coupled to other files');
+  }
+  if (s.churn > 0) {
+    parts.push(`${s.churn} lines churned`);
+  }
+  return parts.join(' · ');
+}
+
 function toPick(result: RiskResult): HotspotPick {
   const s = result.signals;
+  // Signal line mirrors the Risk Report panel tooltip (treeProvider.ts) so the
+  // two surfaces agree — all five signals plus complexity.
   return {
     label: `$(flame) ${result.score} · ${result.tier} — ${result.path}`,
     description:
       `commits ${s.freq} · churn ${s.churn} · ` +
-      `authors ${s.authors} · complexity ${s.complexity}`,
+      `authors ${s.authors} · ` +
+      `ownership ${Math.round(s.ownership * 100)}% fragmented · ` +
+      `coupling ${Math.round(s.coupling * 100)}% · ` +
+      `complexity ${s.complexity}`,
+    detail: explain(result),
     result,
   };
 }
@@ -34,6 +66,35 @@ function toUri(repoRelPath: string): vscode.Uri | undefined {
     return undefined;
   }
   return vscode.Uri.joinPath(folder.uri, ...repoRelPath.split('/'));
+}
+
+/**
+ * Open a hotspot's file. Tries the workspace-root-relative URI first (the common
+ * case: the workspace folder IS the git root); if that path doesn't exist (e.g.
+ * the git root is a parent of the open folder), falls back to a workspace search,
+ * and only then surfaces a clear message — never silently does nothing.
+ */
+async function openHotspot(repoRelPath: string): Promise<void> {
+  const uri = toUri(repoRelPath);
+  if (uri) {
+    try {
+      await vscode.workspace.fs.stat(uri);
+      await vscode.window.showTextDocument(uri);
+      return;
+    } catch {
+      // Not at the root-relative location — fall through to a search.
+    }
+  }
+
+  const matches = await vscode.workspace.findFiles(repoRelPath, undefined, 1);
+  if (matches.length > 0) {
+    await vscode.window.showTextDocument(matches[0]);
+    return;
+  }
+
+  await vscode.window.showWarningMessage(
+    `Hotspot: couldn't open "${repoRelPath}" — it may have moved or been deleted.`,
+  );
 }
 
 /**
@@ -71,10 +132,7 @@ export async function showTopHotspots(service: HotspotService): Promise<void> {
     return; // user dismissed
   }
 
-  const uri = toUri(picked.result.path);
-  if (uri) {
-    await vscode.window.showTextDocument(uri);
-  }
+  await openHotspot(picked.result.path);
 }
 
 /**
