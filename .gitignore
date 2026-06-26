@@ -1,2 +1,16 @@
+# Coordination live-state (never commit)
 active_tasks.md
 active_files.md
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+out/
+
+# VS Code test runtime (downloaded VS Code + test profile)
+.vscode-test/
+
+# Packaged extension
+*.vsix

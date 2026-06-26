@@ -1,0 +1,33 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "type": "npm",
+      "script": "build",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": "$esbuild",
+      "label": "npm: build",
+      "detail": "type-check + esbuild bundle to dist/"
+    },
+    {
+      "type": "npm",
+      "script": "watch",
+      "isBackground": true,
+      "group": "build",
+      "problemMatcher": "$esbuild-watch",
+      "label": "npm: watch",
+      "detail": "esbuild incremental rebuild"
+    },
+    {
+      "type": "npm",
+      "script": "pretest",
+      "group": "test",
+      "problemMatcher": "$tsc",
+      "label": "npm: pretest",
+      "detail": "compile tests + bundle before running integration tests"
+    }
+  ]
+}

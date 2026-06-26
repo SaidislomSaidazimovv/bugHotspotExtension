@@ -1,0 +1,48 @@
+{
+  "name": "hotspot",
+  "displayName": "Hotspot — Bug Hotspot Predictor",
+  "description": "Predicts bug-prone files by fusing git churn, bug-fix history, and code complexity into an inline 0–100 risk score. 100% local and offline.",
+  "version": "0.0.1",
+  "publisher": "hotspot-dev",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Visualization",
+    "Linters",
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "workspaceContains:.git"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "hotspot.scan",
+        "title": "Hotspot: Scan Workspace"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "npm run check-types && node esbuild.js --production",
+    "watch": "node esbuild.js --watch",
+    "check-types": "tsc --noEmit -p ./tsconfig.json",
+    "compile-tests": "tsc -p ./tsconfig.json --outDir out",
+    "pretest": "npm run compile-tests && npm run build",
+    "test": "vscode-test",
+    "unit": "vitest run --passWithNoTests src/test/core"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.7",
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.90.0",
+    "@vscode/test-cli": "^0.0.10",
+    "@vscode/test-electron": "^2.4.1",
+    "esbuild": "^0.23.1",
+    "typescript": "^5.6.2",
+    "vitest": "^2.0.5"
+  }
+}
