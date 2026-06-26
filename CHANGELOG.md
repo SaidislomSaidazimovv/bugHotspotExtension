@@ -4,6 +4,33 @@ All notable changes to the **Hotspot — Bug Hotspot Predictor** extension are d
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.3] — Unreleased
+
+### Added
+
+- **Ownership-fragmentation signal** — the risk score now accounts for how concentrated a
+  file's authorship is (`1 − the top author's commit share`). Code spread across many
+  low-share contributors (weak ownership) raises risk (Bird et al., 2011).
+- **Change-coupling signal** — detects files that historically change together
+  (`shared commits / max(revisions)`); a file's strongest hidden co-change dependency now
+  feeds the score.
+- **`Hotspot: Show Coupled Files`** — a Quick Pick of a file's co-change partners
+  ("you probably also need to edit X"), from the Command Palette and the editor context menu.
+- **`Hotspot: Show Top Hotspots`** — a Quick Pick jump-list of the riskiest files; the
+  status-bar item now opens it on click (was: trigger a rescan).
+- Setting `hotspot.topHotspotsCount` — how many files Show Top Hotspots lists (default 20).
+
+### Changed
+
+- Risk score rebalanced to five process signals — change frequency, code churn, author
+  spread, ownership fragmentation, and change coupling — shaped by the complexity
+  multiplier and bug-fix density booster.
+
+### Fixed
+
+- Extension-discovery integration tests now resolve the extension by manifest name, fixing
+  failures introduced by the `thomasarisu` publisher rename.
+
 ## [0.0.2] — 2026-06-26
 
 ### Changed
@@ -33,5 +60,6 @@ Initial release.
 - Activation only in git workspaces (`workspaceContains:.git`).
 - 100% local and offline — no account, no network, no telemetry.
 
+[0.0.3]: https://github.com/SaidislomSaidazimovv/bugHotspotExtension/compare/v0.0.2...HEAD
 [0.0.2]: https://github.com/SaidislomSaidazimovv/bugHotspotExtension/releases/tag/v0.0.2
 [0.0.1]: https://github.com/SaidislomSaidazimovv/bugHotspotExtension/releases/tag/v0.0.1
