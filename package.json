@@ -28,6 +28,12 @@
       {
         "command": "hotspot.scan",
         "title": "Hotspot: Scan Workspace"
+      },
+      {
+        "command": "hotspot.showTopHotspots",
+        "title": "Show Top Hotspots",
+        "category": "Hotspot",
+        "icon": "$(flame)"
       }
     ],
     "colors": [
@@ -54,6 +60,12 @@
           "type": "boolean",
           "default": true,
           "description": "Run a hotspot scan automatically when a git workspace is opened. Reuses the cached churn when HEAD is unchanged."
+        },
+        "hotspot.topHotspotsCount": {
+          "type": "number",
+          "default": 20,
+          "minimum": 1,
+          "description": "How many top-ranked files to list in the “Show Top Hotspots” quick pick."
         }
       }
     },

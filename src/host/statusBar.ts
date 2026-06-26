@@ -4,7 +4,7 @@ import type { HotspotService } from './scanService';
 
 // Status-bar item showing the active file's hotspot risk — the cheapest
 // always-on signal. Hidden when the active file has no score (or no editor).
-// Clicking it triggers a rescan.
+// Clicking it opens the Top Hotspots jump list (rescan stays in the palette).
 
 /** Register the status-bar item; updates on editor switch and after each scan. */
 export function registerStatusBar(
@@ -12,7 +12,7 @@ export function registerStatusBar(
   service: HotspotService,
 ): void {
   const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-  item.command = 'hotspot.scan';
+  item.command = 'hotspot.showTopHotspots';
 
   const update = (): void => {
     const editor = vscode.window.activeTextEditor;
@@ -29,7 +29,10 @@ export function registerStatusBar(
       return;
     }
     item.text = `$(flame) Hotspot: ${result.score} (${result.tier})`;
-    item.tooltip = `Risk rank for this file (relative to the repo). Click to rescan.`;
+    item.tooltip =
+      `Risk rank for this file (relative to the repo). ` +
+      `Click to jump to the top hotspots. ` +
+      `Rescan via “Hotspot: Scan Workspace” in the Command Palette.`;
     item.show();
   };
 
