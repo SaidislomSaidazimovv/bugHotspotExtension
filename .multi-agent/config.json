@@ -1,0 +1,18 @@
+{
+  "version": "1.0.0",
+  "project_name": "Extension",
+  "scale_mode": "squad",
+  "terminal_count": 3,
+  "has_planner": true,
+  "lock_ttl_minutes": 15,
+  "stale_lock_policy": "warn",
+  "git_variant": "B",
+  "integration_branch": "dev",
+  "prod_branch": "main",
+  "approval_gate_enabled": true,
+  "build_command": "npm run build",
+  "test_command": "npm test",
+  "commit_format": "conventional",
+  "configured_at": "2026-06-26T11:06:52+05:00",
+  "configured_via": "preset:squad"
+}
