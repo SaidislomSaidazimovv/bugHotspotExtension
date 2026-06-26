@@ -6,6 +6,7 @@ import { registerStatusBar } from './statusBar';
 import { registerRiskPanel } from './treeProvider';
 import { registerTopHotspots } from './topHotspots';
 import { registerCoupledFiles } from './coupledFiles';
+import { registerCodeRiskDecorations } from './codeRiskDecorations';
 
 // Thin host layer (ADR-1): analysis lives in `core/` (zero `vscode` imports);
 // this file only wires the service to VS Code commands and UI surfaces.
@@ -20,6 +21,7 @@ export function activate(context: vscode.ExtensionContext): void {
   registerRiskPanel(context, service);
   registerTopHotspots(context, service);
   registerCoupledFiles(context, service);
+  registerCodeRiskDecorations(context);
 
   context.subscriptions.push(
     // Return the promise so callers (and integration tests) can await results.

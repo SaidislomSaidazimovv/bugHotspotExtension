@@ -82,6 +82,17 @@
           "default": 20,
           "minimum": 1,
           "description": "How many top-ranked files to list in the “Show Top Hotspots” quick pick."
+        },
+        "hotspot.codeRiskEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Highlight risky code regions (deeply-nested / long blocks) in the editor with a gutter marker and a hover explanation."
+        },
+        "hotspot.codeRiskMinSeverity": {
+          "type": "string",
+          "enum": ["low", "medium", "high", "critical"],
+          "default": "medium",
+          "description": "Only highlight code-risk regions at or above this severity."
         }
       }
     },
