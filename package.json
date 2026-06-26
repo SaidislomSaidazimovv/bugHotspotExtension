@@ -23,7 +23,34 @@
         "command": "hotspot.scan",
         "title": "Hotspot: Scan Workspace"
       }
-    ]
+    ],
+    "colors": [
+      {
+        "id": "hotspot.tierCritical",
+        "description": "Explorer badge color for critical-risk files.",
+        "defaults": { "dark": "#e51400", "light": "#e51400", "highContrast": "#ff2d2d" }
+      },
+      {
+        "id": "hotspot.tierHigh",
+        "description": "Explorer badge color for high-risk files.",
+        "defaults": { "dark": "#f57c00", "light": "#e36209", "highContrast": "#ff8c1a" }
+      },
+      {
+        "id": "hotspot.tierMedium",
+        "description": "Explorer badge color for medium-risk files.",
+        "defaults": { "dark": "#d7a000", "light": "#9a7400", "highContrast": "#e0b000" }
+      }
+    ],
+    "configuration": {
+      "title": "Hotspot",
+      "properties": {
+        "hotspot.scanOnStartup": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run a hotspot scan automatically when a git workspace is opened. Reuses the cached churn when HEAD is unchanged."
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run build",
