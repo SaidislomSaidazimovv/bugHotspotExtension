@@ -6,6 +6,7 @@ import { readChurn } from '../core/gitReader';
 import { computeComplexity, type ComplexityResult } from '../core/complexity';
 import { computeRisk, type RiskResult } from '../core/scorer';
 import { buildBugfixDensity } from '../core/bugfix';
+import { buildOwnership } from '../core/ownership';
 import { HotspotCache } from './cache';
 
 /**
@@ -104,7 +105,11 @@ class HotspotServiceImpl implements HotspotService {
         // Feed S2-D's bug-fix density into the score (RESEARCH §3.6): files
         // whose history is dominated by bug-fix commits rank higher.
         const bugfixDensity = buildBugfixDensity(churn);
-        return this.publish(computeRisk(churn, complexity, { bugfixDensity }));
+        // Feed S4-A's ownership fragmentation (1 − topAuthorShare) into the
+        // author weight slot (RESEARCH §1; Bird et al. 2011): files with weak,
+        // fragmented ownership rank higher than the raw author count implied.
+        const ownership = buildOwnership(churn);
+        return this.publish(computeRisk(churn, complexity, { bugfixDensity, ownership }));
       },
     );
   }

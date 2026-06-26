@@ -23,6 +23,15 @@ export interface FileChurn {
   linesDeleted: number;
   /** Distinct author names (git `%an`) that touched this path. */
   authors: string[];
+  /**
+   * Per-author commit counts touching this path (git `%an` → count). Each
+   * non-merge commit touching the file is attributed to exactly one author, so
+   * `sum(authorCommits[].commits) === commits`. Powers the ownership-fragmentation
+   * signal (RESEARCH §1 "Ownership concentration"; Bird et al. 2011, "Don't
+   * Touch My Code") — see {@link ownershipStats}. Additive over the `authors`
+   * name list, which is retained for back-compat.
+   */
+  authorCommits: Array<{ name: string; commits: number }>;
   /** ISO-8601 date of the earliest commit touching this path. */
   firstSeen: string;
   /** ISO-8601 date of the most recent commit touching this path. */

@@ -48,7 +48,9 @@ class RiskReportProvider implements vscode.TreeDataProvider<RiskResult> {
         `Risk **${result.score}** · ${result.tier} _(relative ranking, not "% buggy")_`,
         '',
         `commits ${result.signals.freq} · churn ${result.signals.churn} · ` +
-          `authors ${result.signals.authors} · complexity ${result.signals.complexity}`,
+          `authors ${result.signals.authors} · ` +
+          `ownership ${Math.round(result.signals.ownership * 100)}% fragmented · ` +
+          `complexity ${result.signals.complexity}`,
       ].join('\n'),
     );
     item.iconPath = tierIcon(result.tier);

@@ -56,6 +56,26 @@ describe('parseGitLog (fixture aggregation)', () => {
     expect([...reader.authors].sort()).toEqual(['Alice Smith', 'Bob Jones']);
   });
 
+  it('captures per-author commit counts (ownership signal input)', () => {
+    // gitReader.ts: Alice (commit1) + Bob (commit2) → one each.
+    const reader = expectChurn(map, 'src/core/gitReader.ts');
+    const byName = new Map(reader.authorCommits.map((a) => [a.name, a.commits]));
+    expect(byName.get('Alice Smith')).toBe(1);
+    expect(byName.get('Bob Jones')).toBe(1);
+    // sum(authorCommits) === commits, and names mirror `authors`.
+    expect(reader.authorCommits.reduce((s, a) => s + a.commits, 0)).toBe(reader.commits);
+    expect(reader.authorCommits.map((a) => a.name).sort()).toEqual([...reader.authors].sort());
+
+    // Single-author single-commit file → exactly one entry of 1.
+    expect(expectChurn(map, 'src/core/types.ts').authorCommits).toEqual([
+      { name: 'Alice Smith', commits: 1 },
+    ]);
+    // Binary-only touch still attributes the commit to its author.
+    expect(expectChurn(map, 'assets/logo.png').authorCommits).toEqual([
+      { name: 'Bob Jones', commits: 1 },
+    ]);
+  });
+
   it('counts bug-fix commits per file from the subject (%s)', () => {
     // commit1 "fix null deref in parser" = bugfix; commit2 "add logo asset" = not.
     // gitReader.ts touched by both → 1/2; types.ts only by commit1 → 1/1.
@@ -183,6 +203,11 @@ describe('readChurn (real git spawn — exercises the default runner end-to-end)
       expect(churn.commits).toBeGreaterThan(0);
       expect(Array.isArray(churn.authors)).toBe(true);
       expect(churn.authors.length).toBeGreaterThan(0);
+      // per-author counts are well-formed and sum to the commit total
+      expect(Array.isArray(churn.authorCommits)).toBe(true);
+      expect(churn.authorCommits.length).toBe(churn.authors.length);
+      expect(churn.authorCommits.every((a) => typeof a.name === 'string' && a.commits > 0)).toBe(true);
+      expect(churn.authorCommits.reduce((s, a) => s + a.commits, 0)).toBe(churn.commits);
       // subject (%s) is now captured → bugfixCommits is a real count, 0..commits.
       expect(typeof churn.bugfixCommits).toBe('number');
       expect(churn.bugfixCommits).toBeGreaterThanOrEqual(0);

@@ -106,17 +106,19 @@ export function resolveRenamePath(raw: string): string {
   return path.trim();
 }
 
-// Internal accumulator. Tracks author *names* in a Set and compares dates by
-// epoch ms (offsets vary), materializing the public FileChurn shape on finalize.
-// Date bounds start at ±Infinity so commits with an unparseable %aI (dateMs =
-// NaN) are simply skipped for first/last-seen instead of poisoning the bounds.
+// Internal accumulator. Tracks per-author commit COUNTS in a Map (name → count)
+// so finalize can emit both the distinct-name list and the ownership-fragmentation
+// input (authorCommits); compares dates by epoch ms (offsets vary), materializing
+// the public FileChurn shape on finalize. Date bounds start at ±Infinity so
+// commits with an unparseable %aI (dateMs = NaN) are simply skipped for
+// first/last-seen instead of poisoning the bounds.
 interface ChurnAcc {
   path: string;
   commits: number;
   bugfixCommits: number;
   linesAdded: number;
   linesDeleted: number;
-  authors: Set<string>;
+  authorCommits: Map<string, number>;
   firstSeenMs: number;
   firstSeen: string;
   lastSeenMs: number;
@@ -178,7 +180,7 @@ class ChurnAggregator {
         bugfixCommits: 0,
         linesAdded: 0,
         linesDeleted: 0,
-        authors: new Set<string>(),
+        authorCommits: new Map<string, number>(),
         firstSeenMs: Infinity,
         firstSeen: '',
         lastSeenMs: -Infinity,
@@ -193,7 +195,9 @@ class ChurnAggregator {
     acc.linesAdded += added;
     acc.linesDeleted += deleted;
     if (ctx.author) {
-      acc.authors.add(ctx.author);
+      // One numstat row = this commit touching this path once, attributed to
+      // its single author → increment that author's count for the file.
+      acc.authorCommits.set(ctx.author, (acc.authorCommits.get(ctx.author) ?? 0) + 1);
     }
     // Skip unparseable dates so one bad %aI can't freeze the bounds.
     if (Number.isFinite(ctx.dateMs)) {
@@ -217,7 +221,8 @@ class ChurnAggregator {
         bugfixCommits: acc.bugfixCommits,
         linesAdded: acc.linesAdded,
         linesDeleted: acc.linesDeleted,
-        authors: [...acc.authors],
+        authors: [...acc.authorCommits.keys()],
+        authorCommits: [...acc.authorCommits].map(([name, commits]) => ({ name, commits })),
         firstSeen: acc.firstSeen,
         lastSeen: acc.lastSeen,
       };

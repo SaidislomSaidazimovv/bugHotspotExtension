@@ -21,6 +21,10 @@ function sampleMap(): ChurnMap {
       linesAdded: 13,
       linesDeleted: 3,
       authors: ['Alice Smith', 'Bob Jones'],
+      authorCommits: [
+        { name: 'Alice Smith', commits: 1 },
+        { name: 'Bob Jones', commits: 1 },
+      ],
       firstSeen: '2026-06-20T14:00:00+09:00',
       lastSeen: '2026-06-20T10:00:00+00:00',
     },
@@ -31,6 +35,7 @@ function sampleMap(): ChurnMap {
       linesAdded: 7,
       linesDeleted: 0,
       authors: ['Carol Lee'],
+      authorCommits: [{ name: 'Carol Lee', commits: 1 }],
       firstSeen: '2026-06-01T12:00:00+00:00',
       lastSeen: '2026-06-01T12:00:00+00:00',
     },
@@ -50,6 +55,44 @@ describe('serializeChurn / deserializeChurn', () => {
     expect(restored).toEqual(original);
     // Explicitly guard the S2-D bugfixCommits field survives the JSON round-trip.
     expect(restored.get('src/core/gitReader.ts')?.bugfixCommits).toBe(1);
+    // S4-A: per-author commit counts survive the round-trip too.
+    expect(restored.get('src/core/gitReader.ts')?.authorCommits).toEqual([
+      { name: 'Alice Smith', commits: 1 },
+      { name: 'Bob Jones', commits: 1 },
+    ]);
+  });
+
+  it('stamps schema version 2 (S4-A authorCommits bump)', () => {
+    expect(CHURN_SERDE_VERSION).toBe(2);
+    expect(serializeChurn(sampleMap()).version).toBe(2);
+  });
+
+  it('cache-busts a v1 entry (no authorCommits) to an empty map → cold scan', () => {
+    const v1 = {
+      version: 1,
+      files: [
+        {
+          path: 'old.ts',
+          commits: 3,
+          bugfixCommits: 0,
+          linesAdded: 9,
+          linesDeleted: 1,
+          authors: ['Alice'],
+          firstSeen: '2026-01-01T00:00:00+00:00',
+          lastSeen: '2026-01-02T00:00:00+00:00',
+        },
+      ],
+    } as unknown as SerializedChurnMap;
+    expect(deserializeChurn(v1)).toEqual(new Map());
+  });
+
+  it('defaults a missing authorCommits to [] on deserialize (defensive)', () => {
+    const wire = {
+      version: CHURN_SERDE_VERSION,
+      files: [{ path: 'x.ts', commits: 1, authors: ['A'] }],
+    } as unknown as SerializedChurnMap;
+    const restored = deserializeChurn(wire);
+    expect(restored.get('x.ts')?.authorCommits).toEqual([]);
   });
 
   it('stamps the schema version on the serialized form', () => {

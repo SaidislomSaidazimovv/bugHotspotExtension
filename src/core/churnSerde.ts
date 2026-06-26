@@ -10,11 +10,14 @@ import type { ChurnMap, FileChurn } from './types';
 
 /** JSON-safe representation of a {@link ChurnMap}, with a version for cache busting. */
 export interface SerializedChurnMap {
-  version: 1;
+  version: 2;
   files: FileChurn[];
 }
 
-export const CHURN_SERDE_VERSION = 1 as const;
+// Bumped 1 → 2 for S4-A: FileChurn gained `authorCommits` (ownership signal).
+// A v1 cache entry predates that field, so the version mismatch cache-busts it —
+// deserialize returns an empty map and the host falls back to a cold scan.
+export const CHURN_SERDE_VERSION = 2 as const;
 
 /** Convert a ChurnMap into a JSON-serializable object. */
 export function serializeChurn(map: ChurnMap): SerializedChurnMap {
@@ -33,7 +36,13 @@ export function deserializeChurn(data: SerializedChurnMap | undefined | null): C
   }
   for (const file of data.files) {
     if (file && typeof file.path === 'string') {
-      map.set(file.path, file);
+      // Defensive default: a v2 entry should carry `authorCommits`, but guard a
+      // partially-written / hand-edited cache so ownership code never sees
+      // `undefined` (ownershipStats then reports zero fragmentation).
+      map.set(file.path, {
+        ...file,
+        authorCommits: Array.isArray(file.authorCommits) ? file.authorCommits : [],
+      });
     }
   }
   return map;

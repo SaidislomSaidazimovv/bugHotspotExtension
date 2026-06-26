@@ -99,6 +99,7 @@ describe('computeRisk — raw signals', () => {
       freq: 7,
       churn: 150, // 120 + 30
       authors: 4,
+      ownership: 0, // no ownership map supplied → fragmentation reported as 0
       complexity: 333,
     });
   });
@@ -193,6 +194,55 @@ describe('computeRisk — bugfixDensity hook (forward-compat)', () => {
     }).byPath.get('mid.ts')!.score;
     expect(boosted).toBeGreaterThan(without);
     expect(boosted).toBeLessThanOrEqual(100);
+  });
+});
+
+describe('computeRisk — ownership signal (S4-A)', () => {
+  // Two files identical in freq / churn / complexity (those normalize to 0), so
+  // the author weight slot is the ONLY discriminating term. By count, the
+  // 5-author file outranks the 2-author file; by ownership fragmentation we can
+  // flip that — proving fragmentation REPLACES the raw count in the slot.
+  const churn = churnMap([
+    { path: 'concentrated.ts', commits: 10, added: 100, deleted: 50, authors: 5 },
+    { path: 'fragmented.ts', commits: 10, added: 100, deleted: 50, authors: 2 },
+  ]);
+  const cxm = complexityMap({ 'concentrated.ts': 100, 'fragmented.ts': 100 });
+
+  it('ranks by distinct-author COUNT when no ownership map is supplied (fallback)', () => {
+    const { results, byPath } = run(churn, cxm);
+    expect(results[0].path).toBe('concentrated.ts'); // 5 authors > 2 by count
+    expect(byPath.get('concentrated.ts')!.signals.ownership).toBe(0);
+  });
+
+  it('feeds fragmentation into the author slot, replacing the raw count', () => {
+    // concentrated.ts has MORE authors but a dominant owner (low fragmentation);
+    // fragmented.ts has fewer authors but weak ownership (high fragmentation).
+    const { results } = run(churn, cxm, {
+      ownership: new Map([
+        ['concentrated.ts', 0.1],
+        ['fragmented.ts', 0.7],
+      ]),
+    });
+    expect(results[0].path).toBe('fragmented.ts'); // fragmentation now wins
+    expect(results[0].score).toBeGreaterThan(results[1].score);
+  });
+
+  it('surfaces the fragmentation value in signals.ownership', () => {
+    const { byPath } = run(churn, cxm, {
+      ownership: new Map([
+        ['concentrated.ts', 0.1],
+        ['fragmented.ts', 0.7],
+      ]),
+    });
+    expect(byPath.get('fragmented.ts')!.signals.ownership).toBe(0.7);
+    expect(byPath.get('concentrated.ts')!.signals.ownership).toBe(0.1);
+    // raw distinct-author count is still reported alongside.
+    expect(byPath.get('concentrated.ts')!.signals.authors).toBe(5);
+  });
+
+  it('treats a missing ownership entry as 0 fragmentation', () => {
+    const { byPath } = run(churn, cxm, { ownership: new Map([['fragmented.ts', 0.7]]) });
+    expect(byPath.get('concentrated.ts')!.signals.ownership).toBe(0);
   });
 });
 
