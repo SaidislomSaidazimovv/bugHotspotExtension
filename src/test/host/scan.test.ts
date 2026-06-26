@@ -8,8 +8,10 @@ import type { RiskResult } from '../../core/scorer';
 // git history.
 suite('Hotspot scan service (integration)', () => {
   suiteSetup(async () => {
-    const ext = vscode.extensions.getExtension('hotspot-dev.hotspot');
-    assert.ok(ext, 'extension should be discoverable by id');
+    // Resolve by manifest name, not a hardcoded `publisher.id`, so the test
+    // survives publisher renames.
+    const ext = vscode.extensions.all.find((e) => e.packageJSON?.name === 'hotspot');
+    assert.ok(ext, 'hotspot extension should be discoverable');
     await ext!.activate();
   });
 
@@ -49,7 +51,7 @@ suite('Hotspot scan service (integration)', () => {
 
   test('contributes the Risk Report view and a scan populates it', async function () {
     this.timeout(60_000);
-    const ext = vscode.extensions.getExtension('hotspot-dev.hotspot')!;
+    const ext = vscode.extensions.all.find((e) => e.packageJSON?.name === 'hotspot')!;
 
     // View is contributed under the hotspot activity-bar container.
     const views = ext.packageJSON?.contributes?.views?.hotspot as Array<{ id: string }>;

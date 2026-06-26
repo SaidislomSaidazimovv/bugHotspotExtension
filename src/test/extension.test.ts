@@ -3,8 +3,10 @@ import * as vscode from 'vscode';
 
 suite('Hotspot extension', () => {
   test('activates and registers the hotspot.scan command', async () => {
-    const ext = vscode.extensions.getExtension('hotspot-dev.hotspot');
-    assert.ok(ext, 'extension should be discoverable by id');
+    // Resolve by manifest name, not a hardcoded `publisher.id`, so the test
+    // survives publisher renames.
+    const ext = vscode.extensions.all.find((e) => e.packageJSON?.name === 'hotspot');
+    assert.ok(ext, 'hotspot extension should be discoverable');
 
     await ext!.activate();
 
