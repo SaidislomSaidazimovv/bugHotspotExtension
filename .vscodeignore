@@ -21,6 +21,7 @@ tsconfig.json
 active_tasks.md
 active_files.md
 docs/**
+CLAUDE.md
 
 # Misc
 **/.DS_Store

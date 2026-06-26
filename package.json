@@ -3,8 +3,14 @@
   "displayName": "Hotspot — Bug Hotspot Predictor",
   "description": "Predicts bug-prone files by fusing git churn, bug-fix history, and code complexity into an inline 0–100 risk score. 100% local and offline.",
   "version": "0.0.1",
-  "publisher": "hotspot-dev",
+  "publisher": "thomasarisu",
+  "icon": "media/icon.png",
+  "galleryBanner": { "color": "#0d1117", "theme": "dark" },
   "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/SaidislomSaidazimovv/bugHotspotExtension.git" },
+  "bugs": { "url": "https://github.com/SaidislomSaidazimovv/bugHotspotExtension/issues" },
+  "homepage": "https://github.com/SaidislomSaidazimovv/bugHotspotExtension#readme",
+  "keywords": ["hotspot", "code-quality", "technical-debt", "git", "churn", "complexity", "risk", "bug-prediction", "refactoring", "code-health"],
   "engines": {
     "vscode": "^1.90.0"
   },
