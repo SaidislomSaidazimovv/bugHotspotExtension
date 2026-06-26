@@ -4,7 +4,7 @@ All notable changes to the **Hotspot — Bug Hotspot Predictor** extension are d
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.0.3] — Unreleased
+## [0.0.3] — 2026-06-27
 
 ### Added
 
@@ -19,12 +19,19 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`Hotspot: Show Top Hotspots`** — a Quick Pick jump-list of the riskiest files; the
   status-bar item now opens it on click (was: trigger a rescan).
 - Setting `hotspot.topHotspotsCount` — how many files Show Top Hotspots lists (default 20).
+- **Code-level risk highlights** — risky code *regions* (deeply-nested / long blocks) are now
+  marked in the editor with a gutter icon, a faint tint, and a hover that explains why — for
+  files of any tier, not just critical ones. Tunable via `hotspot.codeRiskEnabled` and
+  `hotspot.codeRiskMinSeverity`.
 
 ### Changed
 
 - Risk score rebalanced to five process signals — change frequency, code churn, author
   spread, ownership fragmentation, and change coupling — shaped by the complexity
   multiplier and bug-fix density booster.
+- **Show Top Hotspots** now lists all five signals (including ownership + coupling) plus a
+  plain-language reason per file — matching the Risk Report panel — and reliably opens the
+  selected file (with a clear message if it has moved or been deleted).
 
 ### Fixed
 
@@ -60,6 +67,6 @@ Initial release.
 - Activation only in git workspaces (`workspaceContains:.git`).
 - 100% local and offline — no account, no network, no telemetry.
 
-[0.0.3]: https://github.com/SaidislomSaidazimovv/bugHotspotExtension/compare/v0.0.2...HEAD
+[0.0.3]: https://github.com/SaidislomSaidazimovv/bugHotspotExtension/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/SaidislomSaidazimovv/bugHotspotExtension/releases/tag/v0.0.2
 [0.0.1]: https://github.com/SaidislomSaidazimovv/bugHotspotExtension/releases/tag/v0.0.1
