@@ -6,7 +6,17 @@
 
 import { spawn } from 'node:child_process';
 import { isBugfixCommit } from './bugfix';
-import type { ChurnMap, FileChurn, GitReaderOptions } from './types';
+import { coChangeKey } from './types';
+import type { ChurnMap, CoChangeCount, FileChurn, GitReaderOptions } from './types';
+
+/**
+ * Default mega-commit cap for change-coupling pairing (RESEARCH §3.6): commits
+ * touching more files than this are skipped when accumulating pairwise co-change
+ * counts. Bulk reformats / vendoring / generated drops are noise and, at
+ * O(files²) pairs, a single 2,000-file commit would emit ~2M pairs. Churn
+ * (commits/lines) still counts these commits — only the pairing is skipped.
+ */
+export const MAX_FILES_PER_COMMIT = 50;
 
 /**
  * Produces the raw `git log` stdout as a sequence of UTF-8 chunks. Chunk
@@ -138,12 +148,27 @@ class ChurnAggregator {
   private readonly accs = new Map<string, ChurnAcc>();
   private current: CommitCtx | null = null;
 
+  // Change-coupling state (only populated when `trackCoChange`): the distinct
+  // paths touched by the commit currently being parsed, flushed into pairwise
+  // co-change counts at each commit boundary (RESEARCH §3.6).
+  private readonly trackCoChange: boolean;
+  private readonly maxFilesPerCommit: number;
+  private readonly coChange: CoChangeCount = new Map();
+  private currentFiles: Set<string> | null = null;
+
+  constructor(opts: { trackCoChange?: boolean; maxFilesPerCommit?: number } = {}) {
+    this.trackCoChange = opts.trackCoChange ?? false;
+    this.maxFilesPerCommit = opts.maxFilesPerCommit ?? MAX_FILES_PER_COMMIT;
+  }
+
   /** Feed one complete line (no trailing newline). Order-independent. */
   pushLine(line: string): void {
     if (line === '') {
       return;
     }
     if (line.includes(NUL)) {
+      // New commit header → close out the previous commit's co-change pairs.
+      this.flushCoChange();
       const [, author = '', date = '', subject = ''] = line.split(NUL);
       this.current = {
         author,
@@ -151,6 +176,9 @@ class ChurnAggregator {
         dateMs: Date.parse(date),
         isBugfix: isBugfixCommit(subject),
       };
+      if (this.trackCoChange) {
+        this.currentFiles = new Set();
+      }
       return;
     }
     // numstat row: added<TAB>deleted<TAB>path. `-` marks a binary edit.
@@ -172,6 +200,9 @@ class ChurnAggregator {
   }
 
   private record(path: string, added: number, deleted: number, ctx: CommitCtx): void {
+    // Track this path as part of the current commit's file set (for co-change).
+    this.currentFiles?.add(path);
+
     let acc = this.accs.get(path);
     if (!acc) {
       acc = {
@@ -212,7 +243,38 @@ class ChurnAggregator {
     }
   }
 
+  /**
+   * Emit pairwise co-change counts for the just-finished commit. Skips commits
+   * with < 2 touched files (no pair) and mega-commits over the cap (noise +
+   * O(files²) blowup — see {@link MAX_FILES_PER_COMMIT}). Each unordered pair
+   * gets +1 via the canonical {@link coChangeKey}.
+   */
+  private flushCoChange(): void {
+    const files = this.currentFiles;
+    this.currentFiles = null;
+    if (!this.trackCoChange || !files) {
+      return;
+    }
+    const paths = [...files];
+    if (paths.length < 2 || paths.length > this.maxFilesPerCommit) {
+      return;
+    }
+    for (let i = 0; i < paths.length; i++) {
+      for (let j = i + 1; j < paths.length; j++) {
+        const key = coChangeKey(paths[i], paths[j]);
+        this.coChange.set(key, (this.coChange.get(key) ?? 0) + 1);
+      }
+    }
+  }
+
+  /** Co-change counts accumulated so far. Call after {@link finalize}. */
+  getCoChange(): CoChangeCount {
+    return this.coChange;
+  }
+
   finalize(): ChurnMap {
+    // Flush the final commit's pairs (no trailing header triggers it otherwise).
+    this.flushCoChange();
     const map: ChurnMap = new Map();
     for (const [path, acc] of this.accs) {
       const churn: FileChurn = {
@@ -246,17 +308,31 @@ export function parseGitLog(text: string): ChurnMap {
 }
 
 /**
- * Read git history and aggregate it into a {@link ChurnMap}.
- *
- * @param opts    repo root and optional `since` / `maxCommits` filters.
- * @param runner  source of raw `git log` output; defaults to spawning git.
- *                Inject a fake runner in tests to parse a fixture.
+ * Like {@link parseGitLog} but also accumulates change-coupling co-change counts
+ * (RESEARCH §3.6). Exposed for fixture-driven unit testing of the pairing +
+ * mega-commit cap; {@link readChurnWithCoupling} streams into the same path.
  */
-export async function readChurn(
+export function parseGitLogWithCoupling(
+  text: string,
+  opts: { maxFilesPerCommit?: number } = {},
+): { churn: ChurnMap; coChange: CoChangeCount } {
+  const agg = new ChurnAggregator({
+    trackCoChange: true,
+    maxFilesPerCommit: opts.maxFilesPerCommit,
+  });
+  for (const line of text.split('\n')) {
+    agg.pushLine(line);
+  }
+  const churn = agg.finalize();
+  return { churn, coChange: agg.getCoChange() };
+}
+
+/** Stream a runner's chunked output into an aggregator, buffering by line. */
+async function streamInto(
+  agg: ChurnAggregator,
   opts: GitReaderOptions,
-  runner: GitLogRunner = spawnGitRunner,
-): Promise<ChurnMap> {
-  const agg = new ChurnAggregator();
+  runner: GitLogRunner,
+): Promise<void> {
   let buffer = '';
   for await (const chunk of runner(buildGitLogArgs(opts), opts)) {
     buffer += chunk;
@@ -270,5 +346,43 @@ export async function readChurn(
   if (buffer.length > 0) {
     agg.pushLine(buffer); // trailing line with no final newline
   }
+}
+
+/**
+ * Read git history and aggregate it into a {@link ChurnMap}.
+ *
+ * @param opts    repo root and optional `since` / `maxCommits` filters.
+ * @param runner  source of raw `git log` output; defaults to spawning git.
+ *                Inject a fake runner in tests to parse a fixture.
+ */
+export async function readChurn(
+  opts: GitReaderOptions,
+  runner: GitLogRunner = spawnGitRunner,
+): Promise<ChurnMap> {
+  const agg = new ChurnAggregator();
+  await streamInto(agg, opts, runner);
   return agg.finalize();
+}
+
+/**
+ * Read git history in ONE pass, returning both the {@link ChurnMap} and the
+ * pairwise {@link CoChangeCount} for the change-coupling signal (RESEARCH §3.6).
+ * The returned `churn` is identical to {@link readChurn}'s — co-change pairing
+ * is purely additive and the mega-commit cap affects only the pairing, never the
+ * churn aggregation — so callers can swap this in without changing churn output.
+ *
+ * @param opts    as {@link readChurn}, plus optional `maxFilesPerCommit`.
+ * @param runner  source of raw `git log` output; defaults to spawning git.
+ */
+export async function readChurnWithCoupling(
+  opts: GitReaderOptions,
+  runner: GitLogRunner = spawnGitRunner,
+): Promise<{ churn: ChurnMap; coChange: CoChangeCount }> {
+  const agg = new ChurnAggregator({
+    trackCoChange: true,
+    maxFilesPerCommit: opts.maxFilesPerCommit,
+  });
+  await streamInto(agg, opts, runner);
+  const churn = agg.finalize();
+  return { churn, coChange: agg.getCoChange() };
 }

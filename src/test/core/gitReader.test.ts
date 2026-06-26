@@ -13,11 +13,14 @@ import { resolve } from 'node:path';
 
 import {
   parseGitLog,
+  parseGitLogWithCoupling,
   readChurn,
+  readChurnWithCoupling,
   buildGitLogArgs,
   resolveRenamePath,
   type GitLogRunner,
 } from '../../core/gitReader';
+import { coChangeKey } from '../../core/types';
 import type { ChurnMap } from '../../core/types';
 
 // Resolved from the package root, where Vitest sets cwd. Read as latin1 so the
@@ -215,6 +218,59 @@ describe('readChurn (real git spawn — exercises the default runner end-to-end)
       // real commits have parseable dates
       expect(Number.isNaN(Date.parse(churn.lastSeen))).toBe(false);
     }
+  });
+});
+
+describe('parseGitLogWithCoupling (change-coupling pairing)', () => {
+  const { coChange } = parseGitLogWithCoupling(FIXTURE);
+
+  it('counts each unordered co-change pair once per shared commit', () => {
+    // commit1 touched gitReader.ts + types.ts together.
+    expect(coChange.get(coChangeKey('src/core/gitReader.ts', 'src/core/types.ts'))).toBe(1);
+    // commit2 touched gitReader.ts + logo.png together.
+    expect(coChange.get(coChangeKey('assets/logo.png', 'src/core/gitReader.ts'))).toBe(1);
+    // commit4 touched README.md + the renamed lib/b.ts together.
+    expect(coChange.get(coChangeKey('README.md', 'lib/b.ts'))).toBe(1);
+  });
+
+  it('emits no pair for a single-file commit (commit3 = util.ts only)', () => {
+    expect([...coChange.keys()].some((k) => k.includes('util.ts'))).toBe(false);
+  });
+
+  it('keeps churn identical to parseGitLog (pairing is purely additive)', () => {
+    expect(parseGitLogWithCoupling(FIXTURE).churn).toEqual(parseGitLog(FIXTURE));
+  });
+});
+
+describe('parseGitLogWithCoupling (mega-commit cap)', () => {
+  const NUL = '\u0000';
+  // One commit touching three files x/y/z.
+  const log =
+    `aaa${NUL}Dev${NUL}2026-01-01T00:00:00+00:00${NUL}bulk reformat\n\n` +
+    `1\t0\tx.ts\n1\t0\ty.ts\n1\t0\tz.ts\n`;
+
+  it('skips pairing for a commit over the cap but still counts its churn', () => {
+    const capped = parseGitLogWithCoupling(log, { maxFilesPerCommit: 2 }); // 3 > 2
+    expect(capped.coChange.size).toBe(0);
+    expect(capped.churn.size).toBe(3); // churn unaffected by the cap
+    expect(capped.churn.get('x.ts')!.commits).toBe(1);
+  });
+
+  it('emits all pairs when the commit is within the cap', () => {
+    const within = parseGitLogWithCoupling(log, { maxFilesPerCommit: 3 }); // 3 ≤ 3
+    expect(within.coChange.size).toBe(3); // xy, xz, yz
+    expect(within.coChange.get(coChangeKey('x.ts', 'y.ts'))).toBe(1);
+  });
+});
+
+describe('readChurnWithCoupling (streamed via injected runner)', () => {
+  it('returns the same churn as readChurn plus the co-change counts', async () => {
+    const { churn, coChange } = await readChurnWithCoupling(
+      { repoRoot: '/unused' },
+      chunkedRunner(FIXTURE, 7),
+    );
+    expect(churn).toEqual(await readChurn({ repoRoot: '/unused' }, chunkedRunner(FIXTURE, 7)));
+    expect(coChange.get(coChangeKey('src/core/gitReader.ts', 'src/core/types.ts'))).toBe(1);
   });
 });
 

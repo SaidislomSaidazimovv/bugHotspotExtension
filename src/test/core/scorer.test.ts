@@ -100,6 +100,7 @@ describe('computeRisk — raw signals', () => {
       churn: 150, // 120 + 30
       authors: 4,
       ownership: 0, // no ownership map supplied → fragmentation reported as 0
+      coupling: 0, // no coupling map supplied → strength reported as 0
       complexity: 333,
     });
   });
@@ -144,16 +145,22 @@ describe('computeRisk — edge cases', () => {
 });
 
 describe('computeRisk — tiers', () => {
-  // The top file in a 2-file set maxes every normalized signal → score 100.
-  // Drive thresholds around that known score to exercise every boundary.
+  // To hit score 100 under the 5-term model (weights sum to 1.0), the top file
+  // must max ALL FIVE additive terms — so ownership + coupling maps are supplied
+  // alongside the freq/churn/authors/complexity spread. Drive thresholds around
+  // that known score to exercise every boundary.
   const churn = churnMap([
     { path: 'top.ts', commits: 50, added: 900, deleted: 500, authors: 6 },
     { path: 'bottom.ts', commits: 1, added: 1, deleted: 0, authors: 1 },
   ]);
   const cxm = complexityMap({ 'top.ts': 900, 'bottom.ts': 1 });
+  const maxed: ScoreOptions = {
+    ownership: new Map([['top.ts', 0.9], ['bottom.ts', 0]]),
+    coupling: new Map([['top.ts', 0.9], ['bottom.ts', 0]]),
+  };
 
-  it('defaults: max file is critical, min file is low', () => {
-    const { byPath } = run(churn, cxm);
+  it('defaults: max file is critical (100), min file is low (0)', () => {
+    const { byPath } = run(churn, cxm, maxed);
     expect(byPath.get('top.ts')!.score).toBe(100);
     expect(byPath.get('top.ts')!.tier).toBe('critical');
     expect(byPath.get('bottom.ts')!.score).toBe(0);
@@ -161,7 +168,8 @@ describe('computeRisk — tiers', () => {
   });
 
   it('classifies a score=100 file by configurable thresholds (high boundary inclusive of critical)', () => {
-    const top = (opts: ScoreOptions) => run(churn, cxm, opts).byPath.get('top.ts')!.tier;
+    const top = (opts: ScoreOptions) =>
+      run(churn, cxm, { ...maxed, ...opts }).byPath.get('top.ts')!.tier;
     expect(top({ thresholds: { medium: 25, high: 50, critical: 75 } })).toBe('critical');
     expect(top({ thresholds: { medium: 25, high: 50, critical: 101 } })).toBe('high');
     expect(top({ thresholds: { medium: 25, high: 101, critical: 102 } })).toBe('medium');
@@ -197,52 +205,88 @@ describe('computeRisk — bugfixDensity hook (forward-compat)', () => {
   });
 });
 
-describe('computeRisk — ownership signal (S4-A)', () => {
-  // Two files identical in freq / churn / complexity (those normalize to 0), so
-  // the author weight slot is the ONLY discriminating term. By count, the
-  // 5-author file outranks the 2-author file; by ownership fragmentation we can
-  // flip that — proving fragmentation REPLACES the raw count in the slot.
+describe('computeRisk — ownership signal (S4-A/B1: own additive term)', () => {
+  // Two files identical in freq / churn / authors / complexity (all normalize to
+  // 0), so the ownership term is the ONLY discriminator. Since S4-B1 ownership is
+  // its OWN additive term (no longer borrowing the author slot), higher
+  // fragmentation alone should raise the score.
   const churn = churnMap([
-    { path: 'concentrated.ts', commits: 10, added: 100, deleted: 50, authors: 5 },
-    { path: 'fragmented.ts', commits: 10, added: 100, deleted: 50, authors: 2 },
+    { path: 'concentrated.ts', commits: 10, added: 100, deleted: 50, authors: 3 },
+    { path: 'fragmented.ts', commits: 10, added: 100, deleted: 50, authors: 3 },
   ]);
   const cxm = complexityMap({ 'concentrated.ts': 100, 'fragmented.ts': 100 });
 
-  it('ranks by distinct-author COUNT when no ownership map is supplied (fallback)', () => {
-    const { results, byPath } = run(churn, cxm);
-    expect(results[0].path).toBe('concentrated.ts'); // 5 authors > 2 by count
+  it('contributes nothing (signals.ownership 0) when no ownership map is supplied', () => {
+    const { byPath } = run(churn, cxm);
     expect(byPath.get('concentrated.ts')!.signals.ownership).toBe(0);
+    // identical files ⇒ all terms 0 ⇒ tie broken by path.
+    expect(run(churn, cxm).results.map((r) => r.path)).toEqual([
+      'concentrated.ts',
+      'fragmented.ts',
+    ]);
   });
 
-  it('feeds fragmentation into the author slot, replacing the raw count', () => {
-    // concentrated.ts has MORE authors but a dominant owner (low fragmentation);
-    // fragmented.ts has fewer authors but weak ownership (high fragmentation).
+  it('raises the more fragmented file when ownership is the only differing signal', () => {
     const { results } = run(churn, cxm, {
       ownership: new Map([
         ['concentrated.ts', 0.1],
         ['fragmented.ts', 0.7],
       ]),
     });
-    expect(results[0].path).toBe('fragmented.ts'); // fragmentation now wins
+    expect(results[0].path).toBe('fragmented.ts');
     expect(results[0].score).toBeGreaterThan(results[1].score);
   });
 
-  it('surfaces the fragmentation value in signals.ownership', () => {
+  it('surfaces the fragmentation value in signals.ownership (count still reported)', () => {
     const { byPath } = run(churn, cxm, {
-      ownership: new Map([
-        ['concentrated.ts', 0.1],
-        ['fragmented.ts', 0.7],
-      ]),
+      ownership: new Map([['concentrated.ts', 0.1], ['fragmented.ts', 0.7]]),
     });
     expect(byPath.get('fragmented.ts')!.signals.ownership).toBe(0.7);
     expect(byPath.get('concentrated.ts')!.signals.ownership).toBe(0.1);
-    // raw distinct-author count is still reported alongside.
-    expect(byPath.get('concentrated.ts')!.signals.authors).toBe(5);
+    expect(byPath.get('concentrated.ts')!.signals.authors).toBe(3);
   });
 
   it('treats a missing ownership entry as 0 fragmentation', () => {
     const { byPath } = run(churn, cxm, { ownership: new Map([['fragmented.ts', 0.7]]) });
     expect(byPath.get('concentrated.ts')!.signals.ownership).toBe(0);
+  });
+});
+
+describe('computeRisk — change-coupling signal (S4-B1)', () => {
+  // Identical files except for the coupling signal → it is the only discriminator.
+  const churn = churnMap([
+    { path: 'lonely.ts', commits: 10, added: 100, deleted: 50, authors: 3 },
+    { path: 'coupled.ts', commits: 10, added: 100, deleted: 50, authors: 3 },
+  ]);
+  const cxm = complexityMap({ 'lonely.ts': 100, 'coupled.ts': 100 });
+
+  it('contributes nothing (signals.coupling 0) when no coupling map is supplied', () => {
+    const { byPath } = run(churn, cxm);
+    expect(byPath.get('coupled.ts')!.signals.coupling).toBe(0);
+  });
+
+  it('raises a strongly-coupled file above an uncoupled one', () => {
+    const { results, byPath } = run(churn, cxm, {
+      coupling: new Map([['coupled.ts', 0.8], ['lonely.ts', 0]]),
+    });
+    expect(results[0].path).toBe('coupled.ts');
+    expect(results[0].score).toBeGreaterThan(results[1].score);
+    expect(byPath.get('coupled.ts')!.signals.coupling).toBe(0.8);
+  });
+
+  it('treats a missing coupling entry as 0', () => {
+    const { byPath } = run(churn, cxm, { coupling: new Map([['coupled.ts', 0.8]]) });
+    expect(byPath.get('lonely.ts')!.signals.coupling).toBe(0);
+  });
+
+  it('adds ownership and coupling as independent terms', () => {
+    // One file wins on ownership, the other on coupling; both > the term weight 0.
+    const { byPath } = run(churn, cxm, {
+      ownership: new Map([['lonely.ts', 0.9], ['coupled.ts', 0]]),
+      coupling: new Map([['lonely.ts', 0], ['coupled.ts', 0.9]]),
+    });
+    // Symmetric contributions ⇒ equal scores ⇒ deterministic path-order tie-break.
+    expect(byPath.get('lonely.ts')!.score).toBe(byPath.get('coupled.ts')!.score);
   });
 });
 

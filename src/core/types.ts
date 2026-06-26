@@ -45,6 +45,34 @@ export interface FileChurn {
  */
 export type ChurnMap = Map<string, FileChurn>;
 
+/**
+ * Temporal co-change counts: how many commits touched a given *unordered pair*
+ * of files together (RESEARCH §3.6 change coupling). Keyed by the canonical
+ * pair key from {@link coChangeKey} (the two paths joined by a NUL, lexically
+ * ordered) and valued by the shared-commit count. NUL is used as the separator
+ * — not a space — because repo paths may legitimately contain spaces but never
+ * a NUL byte, so the two paths are always recoverable via {@link splitCoChangeKey}.
+ * Serializable as `[...map.entries()]`.
+ */
+export type CoChangeCount = Map<string, number>;
+
+/** NUL separator for {@link CoChangeCount} pair keys (never appears in git paths). */
+const CO_CHANGE_SEP = '\u0000';
+
+/**
+ * Canonical key for an unordered file pair in a {@link CoChangeCount}: the two
+ * paths joined by a NUL, lexically ordered so `(a,b)` and `(b,a)` collide.
+ */
+export function coChangeKey(a: string, b: string): string {
+  return a < b ? `${a}${CO_CHANGE_SEP}${b}` : `${b}${CO_CHANGE_SEP}${a}`;
+}
+
+/** Recover the two paths from a {@link coChangeKey}. */
+export function splitCoChangeKey(key: string): [string, string] {
+  const i = key.indexOf(CO_CHANGE_SEP);
+  return [key.slice(0, i), key.slice(i + CO_CHANGE_SEP.length)];
+}
+
 /** Inputs to {@link readChurn}. */
 export interface GitReaderOptions {
   /** Absolute path to the repository root (used as the git `cwd`). */
@@ -56,4 +84,12 @@ export interface GitReaderOptions {
   since?: string;
   /** Cap the number of commits walked, via `git log --max-count`. */
   maxCommits?: number;
+  /**
+   * Mega-commit cap for change-coupling pairing (RESEARCH §3.6): commits that
+   * touch more than this many files are skipped when accumulating pairwise
+   * co-change counts (bulk reformats / vendoring are noise and would blow up the
+   * O(files²) pairing). Churn aggregation is unaffected. Default 50. Only
+   * consulted by {@link readChurnWithCoupling}.
+   */
+  maxFilesPerCommit?: number;
 }

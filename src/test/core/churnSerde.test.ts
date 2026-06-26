@@ -1,6 +1,7 @@
-// Round-trip tests for ChurnMap serialization (pure layer). The point of these
-// helpers is that a raw Map does NOT survive JSON — so the tests assert the
-// full JSON.stringify → parse → deserialize path, the way ADR-7 caching uses it.
+// Round-trip tests for the churn cache serde (pure layer). A raw Map does NOT
+// survive JSON, so these assert the full JSON.stringify → parse → deserialize
+// path the way ADR-7 caching uses it. As of S4-B1 the cache holds BOTH the
+// ChurnMap and the change-coupling co-change counts (serde v3).
 
 import { describe, it, expect } from 'vitest';
 
@@ -10,7 +11,8 @@ import {
   CHURN_SERDE_VERSION,
   type SerializedChurnMap,
 } from '../../core/churnSerde';
-import type { ChurnMap, FileChurn } from '../../core/types';
+import { coChangeKey } from '../../core/types';
+import type { ChurnMap, CoChangeCount, FileChurn } from '../../core/types';
 
 function sampleMap(): ChurnMap {
   const files: FileChurn[] = [
@@ -43,33 +45,49 @@ function sampleMap(): ChurnMap {
   return new Map(files.map((f) => [f.path, f]));
 }
 
+function sampleCoChange(): CoChangeCount {
+  return new Map([
+    [coChangeKey('src/core/gitReader.ts', 'README.md'), 6],
+    [coChangeKey('src/core/gitReader.ts', 'src/core/types.ts'), 9],
+  ]);
+}
+
+/** Simulate the real cache path: serialize → JSON → parse → deserialize. */
+function roundTrip(churn: ChurnMap, coChange: CoChangeCount) {
+  const wire = JSON.parse(JSON.stringify(serializeChurn(churn, coChange))) as SerializedChurnMap;
+  return deserializeChurn(wire);
+}
+
 describe('serializeChurn / deserializeChurn', () => {
   it('demonstrates why these helpers exist: JSON.stringify(Map) loses everything', () => {
     expect(JSON.stringify(sampleMap())).toBe('{}');
   });
 
-  it('round-trips a ChurnMap through JSON without loss', () => {
-    const original = sampleMap();
-    const wire = JSON.parse(JSON.stringify(serializeChurn(original))) as SerializedChurnMap;
-    const restored = deserializeChurn(wire);
-    expect(restored).toEqual(original);
-    // Explicitly guard the S2-D bugfixCommits field survives the JSON round-trip.
-    expect(restored.get('src/core/gitReader.ts')?.bugfixCommits).toBe(1);
-    // S4-A: per-author commit counts survive the round-trip too.
-    expect(restored.get('src/core/gitReader.ts')?.authorCommits).toEqual([
+  it('round-trips churn + co-change through JSON without loss', () => {
+    const churn = sampleMap();
+    const coChange = sampleCoChange();
+    const restored = roundTrip(churn, coChange);
+
+    expect(restored.churn).toEqual(churn);
+    expect(restored.coChange).toEqual(coChange);
+    // Guard the S2-D / S4-A fields survive the JSON round-trip.
+    expect(restored.churn.get('src/core/gitReader.ts')?.bugfixCommits).toBe(1);
+    expect(restored.churn.get('src/core/gitReader.ts')?.authorCommits).toEqual([
       { name: 'Alice Smith', commits: 1 },
       { name: 'Bob Jones', commits: 1 },
     ]);
+    // S4-B1: co-change counts survive (NUL-separated keys included).
+    expect(restored.coChange.get(coChangeKey('src/core/gitReader.ts', 'src/core/types.ts'))).toBe(9);
   });
 
-  it('stamps schema version 2 (S4-A authorCommits bump)', () => {
-    expect(CHURN_SERDE_VERSION).toBe(2);
-    expect(serializeChurn(sampleMap()).version).toBe(2);
+  it('stamps schema version 3 (S4-B1 co-change bump)', () => {
+    expect(CHURN_SERDE_VERSION).toBe(3);
+    expect(serializeChurn(sampleMap(), sampleCoChange()).version).toBe(3);
   });
 
-  it('cache-busts a v1 entry (no authorCommits) to an empty map → cold scan', () => {
-    const v1 = {
-      version: 1,
+  it('cache-busts a v2 entry (no coChange) to empty maps → cold scan', () => {
+    const v2 = {
+      version: 2,
       files: [
         {
           path: 'old.ts',
@@ -78,48 +96,65 @@ describe('serializeChurn / deserializeChurn', () => {
           linesAdded: 9,
           linesDeleted: 1,
           authors: ['Alice'],
+          authorCommits: [{ name: 'Alice', commits: 3 }],
           firstSeen: '2026-01-01T00:00:00+00:00',
           lastSeen: '2026-01-02T00:00:00+00:00',
         },
       ],
     } as unknown as SerializedChurnMap;
-    expect(deserializeChurn(v1)).toEqual(new Map());
+    const { churn, coChange } = deserializeChurn(v2);
+    expect(churn.size).toBe(0);
+    expect(coChange.size).toBe(0);
   });
 
   it('defaults a missing authorCommits to [] on deserialize (defensive)', () => {
     const wire = {
       version: CHURN_SERDE_VERSION,
       files: [{ path: 'x.ts', commits: 1, authors: ['A'] }],
+      coChange: [],
     } as unknown as SerializedChurnMap;
-    const restored = deserializeChurn(wire);
-    expect(restored.get('x.ts')?.authorCommits).toEqual([]);
+    expect(deserializeChurn(wire).churn.get('x.ts')?.authorCommits).toEqual([]);
   });
 
-  it('stamps the schema version on the serialized form', () => {
-    expect(serializeChurn(sampleMap()).version).toBe(CHURN_SERDE_VERSION);
+  it('tolerates a missing / malformed coChange array', () => {
+    const noCoChange = {
+      version: CHURN_SERDE_VERSION,
+      files: [{ path: 'x.ts', commits: 1, authors: [], authorCommits: [] }],
+    } as unknown as SerializedChurnMap;
+    expect(deserializeChurn(noCoChange).coChange).toEqual(new Map());
+
+    const badEntries = {
+      version: CHURN_SERDE_VERSION,
+      files: [],
+      coChange: [['ok', 5], ['missingCount'], [42, 7], ['x', 'notNumber']],
+    } as unknown as SerializedChurnMap;
+    expect([...deserializeChurn(badEntries).coChange.entries()]).toEqual([['ok', 5]]);
   });
 
-  it('round-trips an empty map', () => {
-    expect(deserializeChurn(serializeChurn(new Map()))).toEqual(new Map());
+  it('round-trips empty maps', () => {
+    const { churn, coChange } = roundTrip(new Map(), new Map());
+    expect(churn).toEqual(new Map());
+    expect(coChange).toEqual(new Map());
   });
 
-  it('degrades to an empty map on undefined / version-mismatch / malformed input', () => {
-    expect(deserializeChurn(undefined)).toEqual(new Map());
-    expect(deserializeChurn(null)).toEqual(new Map());
+  it('degrades to empty maps on undefined / version-mismatch / malformed input', () => {
+    const empty = { churn: new Map(), coChange: new Map() };
+    expect(deserializeChurn(undefined)).toEqual(empty);
+    expect(deserializeChurn(null)).toEqual(empty);
     expect(
-      deserializeChurn({ version: 99, files: [] } as unknown as SerializedChurnMap),
-    ).toEqual(new Map());
+      deserializeChurn({ version: 99, files: [], coChange: [] } as unknown as SerializedChurnMap),
+    ).toEqual(empty);
     expect(
       deserializeChurn({ version: CHURN_SERDE_VERSION } as unknown as SerializedChurnMap),
-    ).toEqual(new Map());
+    ).toEqual(empty);
   });
 
   it('skips malformed file entries without a string path', () => {
     const wire = {
       version: CHURN_SERDE_VERSION,
       files: [{ nope: true }, { path: 'ok.ts', commits: 1 }],
+      coChange: [],
     } as unknown as SerializedChurnMap;
-    const restored = deserializeChurn(wire);
-    expect([...restored.keys()]).toEqual(['ok.ts']);
+    expect([...deserializeChurn(wire).churn.keys()]).toEqual(['ok.ts']);
   });
 });

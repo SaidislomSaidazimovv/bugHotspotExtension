@@ -2,11 +2,12 @@ import * as vscode from 'vscode';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 
-import { readChurn } from '../core/gitReader';
+import { readChurnWithCoupling } from '../core/gitReader';
 import { computeComplexity, type ComplexityResult } from '../core/complexity';
 import { computeRisk, type RiskResult } from '../core/scorer';
 import { buildBugfixDensity } from '../core/bugfix';
 import { buildOwnership } from '../core/ownership';
+import { buildCoupling, type CoupledFile } from '../core/coupling';
 import { HotspotCache } from './cache';
 
 /**
@@ -21,6 +22,12 @@ export interface HotspotService {
   getResults(): RiskResult[];
   /** Result for a repo-relative path (forward-slash or OS separators). */
   getResultForPath(repoRelPath: string): RiskResult | undefined;
+  /**
+   * Change-coupling partners for a repo-relative path (forward-slash or OS
+   * separators), sorted desc by strength; `[]` when none meet min-support or the
+   * file is unknown. FROZEN contract consumed by S4-B2's "Show Coupled Files".
+   */
+  getCoupledFiles(repoRelPath: string): CoupledFile[];
   /** Fires after every successful scan with the new results. */
   readonly onDidUpdate: vscode.Event<RiskResult[]>;
 }
@@ -39,6 +46,7 @@ function toRepoKey(p: string): string {
 class HotspotServiceImpl implements HotspotService {
   private results: RiskResult[] = [];
   private byPath = new Map<string, RiskResult>();
+  private coupledPartners = new Map<string, CoupledFile[]>();
   private scanning: Promise<RiskResult[]> | undefined;
 
   private readonly _onDidUpdate = new vscode.EventEmitter<RiskResult[]>();
@@ -57,6 +65,10 @@ class HotspotServiceImpl implements HotspotService {
     return this.byPath.get(toRepoKey(repoRelPath));
   }
 
+  getCoupledFiles(repoRelPath: string): CoupledFile[] {
+    return this.coupledPartners.get(toRepoKey(repoRelPath)) ?? [];
+  }
+
   scan(token?: vscode.CancellationToken): Promise<RiskResult[]> {
     // Coalesce concurrent scans (e.g. activation pre-warm + manual command).
     if (this.scanning) {
@@ -71,19 +83,23 @@ class HotspotServiceImpl implements HotspotService {
   private async runScan(token?: vscode.CancellationToken): Promise<RiskResult[]> {
     const repoRoot = this.repoRoot;
     if (!repoRoot) {
+      this.coupledPartners = new Map();
       return this.publish([]); // no folder / not a repo → nothing to score
     }
 
     return vscode.window.withProgress(
       { location: vscode.ProgressLocation.Window, title: 'Hotspot: scanning…' },
       async () => {
-        // Churn: reuse the cache when HEAD is unchanged, else walk git log.
+        // Churn + co-change: reuse the cache when HEAD is unchanged, else walk
+        // git log ONCE (readChurnWithCoupling yields both in a single pass).
         const sha = await this.cache.getHeadSha(repoRoot);
-        let churn = sha ? this.cache.load(sha) : undefined;
-        if (!churn) {
-          churn = await readChurn({ repoRoot });
+        const cached = sha ? this.cache.load(sha) : undefined;
+        let churn = cached?.churn;
+        let coChange = cached?.coChange;
+        if (!churn || !coChange) {
+          ({ churn, coChange } = await readChurnWithCoupling({ repoRoot }));
           if (sha) {
-            await this.cache.save(sha, churn);
+            await this.cache.save(sha, churn, coChange);
           }
         }
         if (token?.isCancellationRequested) {
@@ -105,11 +121,16 @@ class HotspotServiceImpl implements HotspotService {
         // Feed S2-D's bug-fix density into the score (RESEARCH §3.6): files
         // whose history is dominated by bug-fix commits rank higher.
         const bugfixDensity = buildBugfixDensity(churn);
-        // Feed S4-A's ownership fragmentation (1 − topAuthorShare) into the
-        // author weight slot (RESEARCH §1; Bird et al. 2011): files with weak,
-        // fragmented ownership rank higher than the raw author count implied.
+        // S4-A ownership fragmentation (1 − topAuthorShare) — its own weighted
+        // term (RESEARCH §1; Bird et al. 2011).
         const ownership = buildOwnership(churn);
-        return this.publish(computeRisk(churn, complexity, { bugfixDensity, ownership }));
+        // S4-B1 change coupling (RESEARCH §3.6): per-file strongest co-change
+        // strength feeds the score; the ranked partner lists back getCoupledFiles.
+        const { partners, signal } = buildCoupling(churn, coChange);
+        this.coupledPartners = partners;
+        return this.publish(
+          computeRisk(churn, complexity, { bugfixDensity, ownership, coupling: signal }),
+        );
       },
     );
   }

@@ -50,6 +50,7 @@ class RiskReportProvider implements vscode.TreeDataProvider<RiskResult> {
         `commits ${result.signals.freq} · churn ${result.signals.churn} · ` +
           `authors ${result.signals.authors} · ` +
           `ownership ${Math.round(result.signals.ownership * 100)}% fragmented · ` +
+          `coupling ${Math.round(result.signals.coupling * 100)}% · ` +
           `complexity ${result.signals.complexity}`,
       ].join('\n'),
     );

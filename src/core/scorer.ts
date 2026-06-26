@@ -6,17 +6,22 @@
 // frequently changed AND complex. Complexity therefore acts as a multiplier on
 // the process-metric core, not as an additive term.
 //
-// Active signals:
-//   - bugfix_density  → gitReader captures commit subjects, bugfix.ts classifies
-//                       them; wired via `opts.bugfixDensity` (S2-D).
-//   - ownership       → per-author commit COUNTS (FileChurn.authorCommits) →
-//                       fragmentation `1 − topShare` (ownership.ts); wired via
-//                       `opts.ownership`, which REPLACES the distinct-author-count
-//                       feed in the author weight slot (RESEARCH §1 "Ownership
-//                       concentration"; Bird et al. 2011). Absent ⇒ falls back to
-//                       `authors.length` (forward-compatible). (S4-A)
-// Deferred signals (hooks only — P will file follow-ups; do NOT implement here):
-//   - change coupling → co-change mining across commits.
+// Active additive-core signals (RESEARCH §3.6 weighted model, weights sum to 1):
+//   - freq            → commits touching the file.
+//   - churn           → lines added + deleted.
+//   - authors         → distinct-author COUNT (`authors.length`).
+//   - ownership       → ownership fragmentation `1 − topShare` (ownership.ts), its
+//                       OWN weighted term as of S4-B1 (was borrowing the author
+//                       slot in S4-A); RESEARCH lists authors AND ownership as
+//                       separate dimensions. Wired via `opts.ownership`. (S4-A/B1)
+//   - coupling        → change-coupling signal: a file's strongest temporal
+//                       co-change strength (coupling.ts); wired via `opts.coupling`
+//                       (RESEARCH §3.6). (S4-B1)
+// Multiplier signals (outside the additive core):
+//   - complexity      → product metric, a [0.5, 1] multiplier (Tornhill model).
+//   - bugfix_density  → (1 + density) booster; wired via `opts.bugfixDensity` (S2-D).
+// Each signal map is optional; an absent map contributes 0 to its term, so
+// `computeRisk(churn, complexity)` with no options still works (forward-compat).
 
 import type { ChurnMap } from './types';
 import type { ComplexityResult } from './complexity';
@@ -36,7 +41,9 @@ export interface RiskResult {
    *   churn      = linesAdded + linesDeleted
    *   authors    = number of distinct authors
    *   ownership  = ownership fragmentation `1 − topAuthorShare` in [0, 1); 0 when
-   *                no `ownership` map was supplied (forward-compat fallback path)
+   *                no `ownership` map was supplied
+   *   coupling   = strongest change-coupling strength in [0, 1]; 0 when no
+   *                `coupling` map was supplied / the file has no coupled partners
    *   complexity = ComplexityResult.total (0 when no complexity entry exists)
    */
   signals: {
@@ -44,6 +51,7 @@ export interface RiskResult {
     churn: number;
     authors: number;
     ownership: number;
+    coupling: number;
     complexity: number;
   };
 }
@@ -53,6 +61,8 @@ export interface ScoreWeights {
   freq: number;
   churn: number;
   authors: number;
+  ownership: number;
+  coupling: number;
 }
 
 /** Upper bounds (exclusive) for each tier; `>= critical` is `critical`. */
@@ -76,18 +86,31 @@ export interface ScoreOptions {
    */
   bugfixDensity?: Map<string, number>;
   /**
-   * Ownership-fragmentation signal (S4-A): per-path `1 − topAuthorShare` in
-   * [0, 1) (see {@link buildOwnership}). When supplied it REPLACES the
-   * distinct-author-*count* feed in the author weight slot — fragmented
-   * ownership, not the raw head-count, is what correlates with defects
-   * (RESEARCH §1; Bird et al. 2011). The 0.2 author weight is unchanged (no
-   * rebalance ⇒ no double-counting of the author dimension). Absent ⇒ the slot
-   * falls back to `authors.length`, so old callers are unaffected (forward-compat).
+   * Ownership-fragmentation signal (S4-A/B1): per-path `1 − topAuthorShare` in
+   * [0, 1) (see {@link buildOwnership}). As of S4-B1 this is its OWN weighted
+   * term (`weights.ownership`), separate from the distinct-author count, matching
+   * RESEARCH's separate authors/ownership dimensions (Bird et al. 2011). Absent /
+   * missing entry ⇒ 0 ⇒ the ownership term contributes nothing (forward-compat).
    */
   ownership?: Map<string, number>;
+  /**
+   * Change-coupling signal (S4-B1): per-path strongest temporal co-change
+   * strength in [0, 1] (see {@link buildCoupling}), feeding `weights.coupling`.
+   * Absent / missing entry ⇒ 0 ⇒ the coupling term contributes nothing
+   * (forward-compat).
+   */
+  coupling?: Map<string, number>;
 }
 
-const DEFAULT_WEIGHTS: ScoreWeights = { freq: 0.45, churn: 0.35, authors: 0.2 };
+// RESEARCH §3.6 weighted model (sum = 1.0). S4-B1 rebalanced the S4-A defaults
+// (0.45/0.35/0.2) to split ownership + coupling into their own terms.
+const DEFAULT_WEIGHTS: ScoreWeights = {
+  freq: 0.3,
+  churn: 0.25,
+  authors: 0.15,
+  ownership: 0.15,
+  coupling: 0.15,
+};
 const DEFAULT_THRESHOLDS: ScoreThresholds = { medium: 25, high: 50, critical: 75 };
 
 function clamp(value: number, lo: number, hi: number): number {
@@ -137,44 +160,46 @@ export function computeRisk(
   const thresholds: ScoreThresholds = { ...DEFAULT_THRESHOLDS, ...opts.thresholds };
   const bugfixDensity = opts.bugfixDensity;
   const ownership = opts.ownership;
+  const coupling = opts.coupling;
 
   const paths = [...churn.keys()];
   if (paths.length === 0) {
     return [];
   }
 
-  // Gather raw signals in path order. The author weight slot is fed by ownership
-  // FRAGMENTATION when an `ownership` map is supplied (S4-A) — a weak/fragmented
-  // owner is the real defect signal (RESEARCH §1; Bird et al. 2011) — otherwise
-  // it falls back to the distinct-author COUNT (legacy / forward-compat).
-  const useOwnership = ownership !== undefined;
+  // Gather raw signals in path order. Authors (count), ownership (fragmentation)
+  // and coupling (strongest co-change) are now SEPARATE additive terms (S4-B1);
+  // an absent signal map ⇒ that raw value is 0 ⇒ after normalize the term is 0.
   const rawFreq: number[] = [];
   const rawChurn: number[] = [];
   const rawAuthors: number[] = [];
   const rawOwnership: number[] = [];
-  const rawAuthorSlot: number[] = [];
+  const rawCoupling: number[] = [];
   const rawComplexity: number[] = [];
   for (const path of paths) {
     const fc = churn.get(path)!;
     rawFreq.push(fc.commits);
     rawChurn.push(fc.linesAdded + fc.linesDeleted);
     rawAuthors.push(fc.authors.length);
-    const fragmentation = ownership?.get(path) ?? 0;
-    rawOwnership.push(fragmentation);
-    rawAuthorSlot.push(useOwnership ? fragmentation : fc.authors.length);
+    rawOwnership.push(ownership?.get(path) ?? 0);
+    rawCoupling.push(coupling?.get(path) ?? 0);
     rawComplexity.push(complexity.get(path)?.total ?? 0);
   }
 
   const nFreq = normalize(rawFreq);
   const nChurn = normalize(rawChurn);
-  const nAuthorSlot = normalize(rawAuthorSlot);
+  const nAuthors = normalize(rawAuthors);
+  const nOwnership = normalize(rawOwnership);
+  const nCoupling = normalize(rawCoupling);
   const nComplexity = normalize(rawComplexity);
 
   const results: RiskResult[] = paths.map((path, i) => {
     const core =
       weights.freq * nFreq[i] +
       weights.churn * nChurn[i] +
-      weights.authors * nAuthorSlot[i];
+      weights.authors * nAuthors[i] +
+      weights.ownership * nOwnership[i] +
+      weights.coupling * nCoupling[i];
     const density = bugfixDensity?.get(path) ?? 0;
     // Complexity multiplier in [0.5, 1]: a process-hot file with no complexity
     // signal still scores half; a complex one scores full. Bug-fix density is a
@@ -190,6 +215,7 @@ export function computeRisk(
         churn: rawChurn[i],
         authors: rawAuthors[i],
         ownership: rawOwnership[i],
+        coupling: rawCoupling[i],
         complexity: rawComplexity[i],
       },
     };
