@@ -4,7 +4,12 @@ import * as path from 'node:path';
 
 import { readChurnWithCoupling } from '../core/gitReader';
 import { computeComplexity, type ComplexityResult } from '../core/complexity';
-import { computeRisk, type RiskResult } from '../core/scorer';
+import {
+  computeRisk,
+  type RiskResult,
+  type ScoreWeights,
+  type ScoreThresholds,
+} from '../core/scorer';
 import { buildBugfixDensity } from '../core/bugfix';
 import { buildOwnership } from '../core/ownership';
 import { buildCoupling, type CoupledFile } from '../core/coupling';
@@ -67,6 +72,78 @@ function getExcludePatterns(): string[] {
     .getConfiguration('hotspot')
     .get<string[]>('exclude', DEFAULT_EXCLUDE);
   return Array.isArray(v) ? v : DEFAULT_EXCLUDE;
+}
+
+/** The `hotspot.*` keys (S7-A2) whose change should trigger a debounced rescan. */
+const RESCAN_CONFIG_KEYS = [
+  'hotspot.exclude',
+  'hotspot.weights',
+  'hotspot.thresholds',
+  'hotspot.sinceMonths',
+] as const;
+
+/** Debounce window for the config-change rescan (coalesces rapid settings edits). */
+const CONFIG_RESCAN_DEBOUNCE_MS = 500;
+
+const WEIGHT_KEYS: (keyof ScoreWeights)[] = [
+  'freq',
+  'churn',
+  'recency',
+  'authors',
+  'ownership',
+  'coupling',
+];
+const THRESHOLD_KEYS: (keyof ScoreThresholds)[] = ['medium', 'high', 'critical'];
+
+/** A finite, non-negative number — the only values we accept from user config. */
+function finiteNonNeg(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0;
+}
+
+/**
+ * Read `hotspot.weights` as a sanitized partial: only the six known
+ * `ScoreWeights` keys with finite, non-negative values are kept; everything else
+ * (missing / wrong-typed / negative / extra keys) is dropped so the scorer falls
+ * back to its default for that term. Returns `undefined` when nothing is usable.
+ */
+function getWeights(): Partial<ScoreWeights> | undefined {
+  const raw = vscode.workspace.getConfiguration('hotspot').get<Record<string, unknown>>('weights');
+  if (!raw || typeof raw !== 'object') {
+    return undefined;
+  }
+  const out: Partial<ScoreWeights> = {};
+  for (const key of WEIGHT_KEYS) {
+    if (finiteNonNeg(raw[key])) {
+      out[key] = raw[key] as number;
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** Read `hotspot.thresholds` as a sanitized partial (same rules as {@link getWeights}). */
+function getThresholds(): Partial<ScoreThresholds> | undefined {
+  const raw = vscode.workspace
+    .getConfiguration('hotspot')
+    .get<Record<string, unknown>>('thresholds');
+  if (!raw || typeof raw !== 'object') {
+    return undefined;
+  }
+  const out: Partial<ScoreThresholds> = {};
+  for (const key of THRESHOLD_KEYS) {
+    if (finiteNonNeg(raw[key])) {
+      out[key] = raw[key] as number;
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * Read `hotspot.sinceMonths` — how many months of history to walk (0 / invalid =
+ * all history). Returns a non-negative integer count of months.
+ */
+function getSinceMonths(): number {
+  const v = vscode.workspace.getConfiguration('hotspot').get<number>('sinceMonths', 0);
+  return finiteNonNeg(v) ? Math.floor(v) : 0;
 }
 
 /** Normalize to the forward-slash, repo-relative form used as ChurnMap keys. */
@@ -153,14 +230,21 @@ class HotspotServiceImpl implements HotspotService {
       async () => {
         // Churn + co-change: reuse the cache when HEAD is unchanged, else walk
         // git log ONCE (readChurnWithCoupling yields both in a single pass).
+        // `sinceMonths` narrows the git history window (S7-A2), so it changes the
+        // walk result — fold it into the cache key so a different window can't hit
+        // a stale entry. (weights/thresholds are applied at scoring time, not in
+        // the walk, so they need no cache-busting.)
+        const sinceMonths = getSinceMonths();
+        const since = sinceMonths > 0 ? `${sinceMonths} months ago` : undefined;
         const sha = await this.cache.getHeadSha(repoRoot);
-        const cached = sha ? this.cache.load(sha) : undefined;
+        const cacheKey = sha ? `${sha}|since=${sinceMonths}` : undefined;
+        const cached = cacheKey ? this.cache.load(cacheKey) : undefined;
         let churn = cached?.churn;
         let coChange = cached?.coChange;
         if (!churn || !coChange) {
-          ({ churn, coChange } = await readChurnWithCoupling({ repoRoot }));
-          if (sha) {
-            await this.cache.save(sha, churn, coChange);
+          ({ churn, coChange } = await readChurnWithCoupling({ repoRoot, since }));
+          if (cacheKey) {
+            await this.cache.save(cacheKey, churn, coChange);
           }
         }
         if (token?.isCancellationRequested) {
@@ -197,8 +281,16 @@ class HotspotServiceImpl implements HotspotService {
         // strength feeds the score; the ranked partner lists back getCoupledFiles.
         const { partners, signal } = buildCoupling(churn, coChange);
         this.coupledPartners = partners;
+        // S7-A2: honor user-configured weights/thresholds (sanitized — invalid
+        // entries fall back to the scorer defaults, see getWeights/getThresholds).
         return this.publish(
-          computeRisk(churn, complexity, { bugfixDensity, ownership, coupling: signal }),
+          computeRisk(churn, complexity, {
+            bugfixDensity,
+            ownership,
+            coupling: signal,
+            weights: getWeights(),
+            thresholds: getThresholds(),
+          }),
         );
       },
     );
@@ -240,5 +332,25 @@ export function createHotspotService(
   repoRoot: string | undefined,
 ): HotspotService & vscode.Disposable {
   const service = new HotspotServiceImpl(repoRoot, new HotspotCache(context.workspaceState));
+
+  // S7-A2: re-scan (debounced) when a scoring-affecting setting changes, so
+  // tweaking weights / thresholds / sinceMonths / exclude updates the ranking
+  // live without a manual command. No-op when no repo is open.
+  if (repoRoot) {
+    let debounce: ReturnType<typeof setTimeout> | undefined;
+    context.subscriptions.push(
+      vscode.workspace.onDidChangeConfiguration((e) => {
+        if (!RESCAN_CONFIG_KEYS.some((key) => e.affectsConfiguration(key))) {
+          return;
+        }
+        if (debounce) {
+          clearTimeout(debounce);
+        }
+        debounce = setTimeout(() => void service.scan(), CONFIG_RESCAN_DEBOUNCE_MS);
+      }),
+      { dispose: () => debounce && clearTimeout(debounce) },
+    );
+  }
+
   return service;
 }

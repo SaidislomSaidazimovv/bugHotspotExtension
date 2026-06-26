@@ -42,6 +42,12 @@
         "title": "Show Coupled Files",
         "category": "Hotspot",
         "icon": "$(git-merge)"
+      },
+      {
+        "command": "hotspot.exportReport",
+        "title": "Export Risk Report",
+        "category": "Hotspot",
+        "icon": "$(export)"
       }
     ],
     "menus": {
@@ -117,6 +123,44 @@
             "**/pnpm-lock.yaml"
           ],
           "description": "Glob patterns (** , * , ? , /) for paths excluded from the risk ranking — generated, vendored, and lockfile paths that carry churn but no actionable risk. Set to [] to disable exclusion."
+        },
+        "hotspot.weights": {
+          "type": "object",
+          "additionalProperties": false,
+          "default": {
+            "freq": 0.22,
+            "churn": 0.18,
+            "recency": 0.2,
+            "authors": 0.1,
+            "ownership": 0.15,
+            "coupling": 0.15
+          },
+          "properties": {
+            "freq": { "type": "number", "minimum": 0, "description": "Weight of change frequency (commits)." },
+            "churn": { "type": "number", "minimum": 0, "description": "Weight of code churn (lines added + deleted)." },
+            "recency": { "type": "number", "minimum": 0, "description": "Weight of time-decay recency (recently-changed files rank higher)." },
+            "authors": { "type": "number", "minimum": 0, "description": "Weight of distinct-author count." },
+            "ownership": { "type": "number", "minimum": 0, "description": "Weight of ownership fragmentation (1 − top-author share)." },
+            "coupling": { "type": "number", "minimum": 0, "description": "Weight of change coupling (strongest temporal co-change)." }
+          },
+          "description": "Relative weights of the additive risk signals. Defaults sum to 1.0; any missing or invalid key falls back to its default."
+        },
+        "hotspot.thresholds": {
+          "type": "object",
+          "additionalProperties": false,
+          "default": { "medium": 25, "high": 50, "critical": 75 },
+          "properties": {
+            "medium": { "type": "number", "minimum": 0, "description": "Score at/above which a file is at least medium risk." },
+            "high": { "type": "number", "minimum": 0, "description": "Score at/above which a file is at least high risk." },
+            "critical": { "type": "number", "minimum": 0, "description": "Score at/above which a file is critical risk." }
+          },
+          "description": "Score cutoffs (0–100) for the low/medium/high/critical tiers. Invalid keys fall back to defaults."
+        },
+        "hotspot.sinceMonths": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "Limit the git-history window to the last N months (0 = all history). Smaller windows emphasize recent activity and speed up the scan."
         }
       }
     },

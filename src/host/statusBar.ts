@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 
 import type { HotspotService } from './scanService';
+import { confidenceNote } from './treeProvider';
 
 // Status-bar item showing the active file's hotspot risk — the cheapest
 // always-on signal. Hidden when the active file has no score (or no editor).
@@ -29,10 +30,12 @@ export function registerStatusBar(
       return;
     }
     item.text = `$(flame) Hotspot: ${result.score} (${result.tier})`;
+    const note = confidenceNote(service.getResults());
     item.tooltip =
       `Risk rank for this file (relative to the repo). ` +
       `Click to jump to the top hotspots. ` +
-      `Rescan via “Hotspot: Scan Workspace” in the Command Palette.`;
+      `Rescan via “Hotspot: Scan Workspace” in the Command Palette.` +
+      (note ? `\n\n${note}` : '');
     item.show();
   };
 
