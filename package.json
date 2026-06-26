@@ -1,7 +1,7 @@
 {
   "name": "hotspot",
   "displayName": "Hotspot — Bug Hotspot Predictor",
-  "description": "Predicts bug-prone files by fusing git churn, bug-fix history, and code complexity into an inline 0–100 risk score. 100% local and offline.",
+  "description": "Predicts bug-prone files by fusing git churn, bug-fix history, code complexity, code ownership, and change coupling into an inline 0–100 risk score. 100% local & offline.",
   "version": "0.0.2",
   "publisher": "thomasarisu",
   "icon": "media/icon.png",
@@ -10,7 +10,9 @@
   "repository": { "type": "git", "url": "https://github.com/SaidislomSaidazimovv/bugHotspotExtension.git" },
   "bugs": { "url": "https://github.com/SaidislomSaidazimovv/bugHotspotExtension/issues" },
   "homepage": "https://github.com/SaidislomSaidazimovv/bugHotspotExtension#readme",
-  "keywords": ["hotspot", "code-quality", "technical-debt", "git", "churn", "complexity", "risk", "bug-prediction", "refactoring", "code-health"],
+  "keywords": ["hotspot", "code-quality", "technical-debt", "git", "churn", "complexity", "code-ownership", "change-coupling", "risk", "bug-prediction", "refactoring", "code-review", "code-health"],
+  "qna": "marketplace",
+  "pricing": "Free",
   "engines": {
     "vscode": "^1.90.0"
   },
