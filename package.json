@@ -50,7 +50,31 @@
           "description": "Run a hotspot scan automatically when a git workspace is opened. Reuses the cached churn when HEAD is unchanged."
         }
       }
-    }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "hotspot",
+          "title": "Hotspot",
+          "icon": "$(flame)"
+        }
+      ]
+    },
+    "views": {
+      "hotspot": [
+        {
+          "id": "hotspot.riskReport",
+          "name": "Risk Report",
+          "icon": "$(flame)"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "hotspot.riskReport",
+        "contents": "No hotspots computed yet.\n[Scan Workspace](command:hotspot.scan)"
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run build",

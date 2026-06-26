@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import { createHotspotService } from './scanService';
 import { registerDecorations } from './decorationProvider';
 import { registerStatusBar } from './statusBar';
+import { registerRiskPanel } from './treeProvider';
 
 // Thin host layer (ADR-1): analysis lives in `core/` (zero `vscode` imports);
 // this file only wires the service to VS Code commands and UI surfaces.
@@ -14,6 +15,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   registerDecorations(context, service);
   registerStatusBar(context, service);
+  registerRiskPanel(context, service);
 
   context.subscriptions.push(
     // Return the promise so callers (and integration tests) can await results.

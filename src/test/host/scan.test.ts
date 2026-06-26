@@ -46,4 +46,24 @@ suite('Hotspot scan service (integration)', () => {
     const b = (await vscode.commands.executeCommand('hotspot.scan')) as RiskResult[];
     assert.strictEqual(a.length, b.length, 'rescans should produce the same file count');
   });
+
+  test('contributes the Risk Report view and a scan populates it', async function () {
+    this.timeout(60_000);
+    const ext = vscode.extensions.getExtension('hotspot-dev.hotspot')!;
+
+    // View is contributed under the hotspot activity-bar container.
+    const views = ext.packageJSON?.contributes?.views?.hotspot as Array<{ id: string }>;
+    assert.ok(
+      Array.isArray(views) && views.some((v) => v.id === 'hotspot.riskReport'),
+      'hotspot.riskReport view should be contributed',
+    );
+
+    // View is registered: VS Code auto-generates `<viewId>.focus`, which only
+    // resolves when the tree view is actually registered at runtime.
+    await vscode.commands.executeCommand('hotspot.riskReport.focus');
+
+    // The tree mirrors getResults(), so a non-empty scan ⇒ ≥1 tree item.
+    const results = (await vscode.commands.executeCommand('hotspot.scan')) as RiskResult[];
+    assert.ok(results.length >= 1, 'scan should yield at least one ranked file (tree item)');
+  });
 });

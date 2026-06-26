@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { readChurn } from '../core/gitReader';
 import { computeComplexity, type ComplexityResult } from '../core/complexity';
 import { computeRisk, type RiskResult } from '../core/scorer';
+import { buildBugfixDensity } from '../core/bugfix';
 import { HotspotCache } from './cache';
 
 /**
@@ -100,7 +101,10 @@ class HotspotServiceImpl implements HotspotService {
           }
         }
 
-        return this.publish(computeRisk(churn, complexity));
+        // Feed S2-D's bug-fix density into the score (RESEARCH §3.6): files
+        // whose history is dominated by bug-fix commits rank higher.
+        const bugfixDensity = buildBugfixDensity(churn);
+        return this.publish(computeRisk(churn, complexity, { bugfixDensity }));
       },
     );
   }
