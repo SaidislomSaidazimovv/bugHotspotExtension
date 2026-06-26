@@ -14,3 +14,13 @@ out/
 
 # Packaged extension
 *.vsix
+
+# Secrets / credentials — NEVER commit
+.env
+.env.*
+*.pat
+*.token
+*.pem
+*.key
+*secret*
+/txt
