@@ -8,6 +8,8 @@ import { computeRisk, type RiskResult } from '../core/scorer';
 import { buildBugfixDensity } from '../core/bugfix';
 import { buildOwnership } from '../core/ownership';
 import { buildCoupling, type CoupledFile } from '../core/coupling';
+import { isExcluded } from '../core/exclude';
+import { splitCoChangeKey, type ChurnMap, type CoChangeCount } from '../core/types';
 import { HotspotCache } from './cache';
 
 /**
@@ -38,9 +40,68 @@ const MAX_FILE_BYTES = 1_500_000;
 // Bytes sampled to sniff for binary content (a NUL byte ⇒ treat as binary).
 const BINARY_SNIFF_BYTES = 8_000;
 
+/**
+ * Default `hotspot.exclude` globs (S7-A1) — generated / vendored / lockfile paths
+ * that carry churn but no actionable risk. Kept in sync with the package.json
+ * default; also used as the fallback when the setting is unreadable. Set the
+ * config to `[]` to disable exclusion entirely.
+ */
+const DEFAULT_EXCLUDE: string[] = [
+  '**/node_modules/**',
+  '**/dist/**',
+  '**/build/**',
+  '**/out/**',
+  '**/*.min.js',
+  '**/*.bundle.js',
+  '**/*.map',
+  '**/vendor/**',
+  '**/*.lock',
+  '**/package-lock.json',
+  '**/yarn.lock',
+  '**/pnpm-lock.yaml',
+];
+
+/** Read the user's `hotspot.exclude` globs, falling back to the defaults. */
+function getExcludePatterns(): string[] {
+  const v = vscode.workspace
+    .getConfiguration('hotspot')
+    .get<string[]>('exclude', DEFAULT_EXCLUDE);
+  return Array.isArray(v) ? v : DEFAULT_EXCLUDE;
+}
+
 /** Normalize to the forward-slash, repo-relative form used as ChurnMap keys. */
 function toRepoKey(p: string): string {
   return p.replace(/\\/g, '/').replace(/^\.\//, '');
+}
+
+/**
+ * Drop excluded paths from the churn map and from the co-change pairs (a pair is
+ * dropped if EITHER endpoint is excluded). Filtering the co-change source removes
+ * excluded files from both the coupling signal and the partner lists. Returns new
+ * maps; the inputs are untouched. An empty pattern list is a no-op (passthrough).
+ */
+function applyExcludes(
+  churn: ChurnMap,
+  coChange: CoChangeCount,
+  patterns: readonly string[],
+): { churn: ChurnMap; coChange: CoChangeCount } {
+  if (!patterns || patterns.length === 0) {
+    return { churn, coChange };
+  }
+  const filteredChurn: ChurnMap = new Map();
+  for (const [key, value] of churn) {
+    if (!isExcluded(key, patterns)) {
+      filteredChurn.set(key, value);
+    }
+  }
+  const filteredCoChange: CoChangeCount = new Map();
+  for (const [key, count] of coChange) {
+    const [a, b] = splitCoChangeKey(key);
+    if (!isExcluded(a, patterns) && !isExcluded(b, patterns)) {
+      filteredCoChange.set(key, count);
+    }
+  }
+  return { churn: filteredChurn, coChange: filteredCoChange };
 }
 
 class HotspotServiceImpl implements HotspotService {
@@ -105,6 +166,14 @@ class HotspotServiceImpl implements HotspotService {
         if (token?.isCancellationRequested) {
           return this.results;
         }
+
+        // Exclude generated / vendored / lockfile paths (S7-A1) BEFORE scoring,
+        // so they neither pollute the ranking nor appear as coupling partners.
+        // Applied to the in-memory churn only — the SHA-keyed cache stays raw, so
+        // toggling `hotspot.exclude` takes effect on the next scan without a cold
+        // git walk.
+        const excludePatterns = getExcludePatterns();
+        ({ churn, coChange } = applyExcludes(churn, coChange, excludePatterns));
 
         // Complexity: recompute from current disk contents per churned file.
         const complexity = new Map<string, ComplexityResult>();

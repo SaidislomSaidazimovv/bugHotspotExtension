@@ -93,6 +93,30 @@
           "enum": ["low", "medium", "high", "critical"],
           "default": "medium",
           "description": "Only highlight code-risk regions at or above this severity."
+        },
+        "hotspot.codeLensEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a per-region risk CodeLens (⚠ Risk: severity · depth · lines) above risky code blocks, gated by the same minimum severity as the gutter decorations."
+        },
+        "hotspot.exclude": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [
+            "**/node_modules/**",
+            "**/dist/**",
+            "**/build/**",
+            "**/out/**",
+            "**/*.min.js",
+            "**/*.bundle.js",
+            "**/*.map",
+            "**/vendor/**",
+            "**/*.lock",
+            "**/package-lock.json",
+            "**/yarn.lock",
+            "**/pnpm-lock.yaml"
+          ],
+          "description": "Glob patterns (** , * , ? , /) for paths excluded from the risk ranking — generated, vendored, and lockfile paths that carry churn but no actionable risk. Set to [] to disable exclusion."
         }
       }
     },
