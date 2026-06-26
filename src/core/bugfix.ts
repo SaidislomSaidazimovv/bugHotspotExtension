@@ -6,10 +6,12 @@
  * reaches ~90%+ agreement with manual labelling, which is enough to drive the
  * `bugfix_density` signal feeding the risk score (ADR-2).
  *
- * Standalone for now: a later integration task wires it into the git reader
- * (capturing `%s`) and the scorer's `bugfixDensity` hook. Pure module — NO
- * `vscode` import (ADR-1).
+ * Wired into the git reader (which captures `%s` per commit) and feeds the
+ * scorer's `bugfixDensity` hook via {@link buildBugfixDensity}. Pure module —
+ * NO `vscode` import (ADR-1).
  */
+
+import type { ChurnMap } from './types';
 
 /**
  * Fix / bug keyword match (RESEARCH §4).
@@ -53,4 +55,17 @@ export function isBugfixCommit(subject: string): boolean {
  */
 export function computeBugfixDensity(bugfixCount: number, totalCount: number): number {
   return totalCount > 0 ? bugfixCount / totalCount : 0;
+}
+
+/**
+ * Per-path bug-fix density for a whole repo, ready to pass straight to the
+ * scorer as `computeRisk(churn, complexity, { bugfixDensity: buildBugfixDensity(churn) })`.
+ * Each value is `bugfixCommits / commits` for that file (0 when it has no commits).
+ */
+export function buildBugfixDensity(churn: ChurnMap): Map<string, number> {
+  const density = new Map<string, number>();
+  for (const [path, fc] of churn) {
+    density.set(path, computeBugfixDensity(fc.bugfixCommits, fc.commits));
+  }
+  return density;
 }

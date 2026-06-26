@@ -11,6 +11,12 @@ export interface FileChurn {
   path: string;
   /** Number of non-merge commits that touched this path. */
   commits: number;
+  /**
+   * How many of those commits were bug fixes (git `%s` classified by
+   * {@link isBugfixCommit}). `bugfixCommits / commits` is the bug-fix density
+   * feeding the risk score (RESEARCH §3.6).
+   */
+  bugfixCommits: number;
   /** Sum of added lines across those commits (binary edits count as 0). */
   linesAdded: number;
   /** Sum of deleted lines across those commits (binary edits count as 0). */

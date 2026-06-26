@@ -5,6 +5,7 @@
 // parser can be unit-tested against a fixture without a real repository.
 
 import { spawn } from 'node:child_process';
+import { isBugfixCommit } from './bugfix';
 import type { ChurnMap, FileChurn, GitReaderOptions } from './types';
 
 /**
@@ -24,11 +25,13 @@ export type GitLogRunner = (
 // `%x00` token (see GIT_LOG_FORMAT), which git expands to this byte in OUTPUT.
 const NUL = '\u0000';
 
-// `%H` full SHA · `%an` author name · `%aI` strict-ISO author date.
-// `%x00` is the literal four-char token passed to git; git substitutes a real
-// NUL between the fields in its output, so names/paths with any other char
-// (spaces, `=>`, unicode) can't corrupt header parsing.
-const GIT_LOG_FORMAT = '--format=%H%x00%an%x00%aI';
+// `%H` full SHA · `%an` author name · `%aI` strict-ISO author date · `%s`
+// commit subject (for bug-fix classification, RESEARCH §3.6/§4). `%x00` is the
+// literal four-char token passed to git; git substitutes a real NUL between the
+// fields in its output, so names/paths/subjects with any other char (spaces,
+// `=>`, unicode) can't corrupt header parsing. `%s` is last so a subject
+// containing a stray NUL-like sequence still can't shift earlier fields.
+const GIT_LOG_FORMAT = '--format=%H%x00%an%x00%aI%x00%s';
 
 /** Build the `git log` argument vector for the given options. */
 export function buildGitLogArgs(opts: GitReaderOptions): string[] {
@@ -110,6 +113,7 @@ export function resolveRenamePath(raw: string): string {
 interface ChurnAcc {
   path: string;
   commits: number;
+  bugfixCommits: number;
   linesAdded: number;
   linesDeleted: number;
   authors: Set<string>;
@@ -123,6 +127,8 @@ interface CommitCtx {
   author: string;
   date: string;
   dateMs: number;
+  /** Whether this commit's subject (`%s`) classifies as a bug fix. */
+  isBugfix: boolean;
 }
 
 /** A stateful, streaming line consumer that aggregates into a ChurnMap. */
@@ -136,8 +142,13 @@ class ChurnAggregator {
       return;
     }
     if (line.includes(NUL)) {
-      const [, author = '', date = ''] = line.split(NUL);
-      this.current = { author, date, dateMs: Date.parse(date) };
+      const [, author = '', date = '', subject = ''] = line.split(NUL);
+      this.current = {
+        author,
+        date,
+        dateMs: Date.parse(date),
+        isBugfix: isBugfixCommit(subject),
+      };
       return;
     }
     // numstat row: added<TAB>deleted<TAB>path. `-` marks a binary edit.
@@ -164,6 +175,7 @@ class ChurnAggregator {
       acc = {
         path,
         commits: 0,
+        bugfixCommits: 0,
         linesAdded: 0,
         linesDeleted: 0,
         authors: new Set<string>(),
@@ -175,6 +187,9 @@ class ChurnAggregator {
       this.accs.set(path, acc);
     }
     acc.commits += 1;
+    if (ctx.isBugfix) {
+      acc.bugfixCommits += 1;
+    }
     acc.linesAdded += added;
     acc.linesDeleted += deleted;
     if (ctx.author) {
@@ -199,6 +214,7 @@ class ChurnAggregator {
       const churn: FileChurn = {
         path: acc.path,
         commits: acc.commits,
+        bugfixCommits: acc.bugfixCommits,
         linesAdded: acc.linesAdded,
         linesDeleted: acc.linesDeleted,
         authors: [...acc.authors],

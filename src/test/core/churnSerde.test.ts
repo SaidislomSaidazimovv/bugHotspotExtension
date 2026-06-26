@@ -17,6 +17,7 @@ function sampleMap(): ChurnMap {
     {
       path: 'src/core/gitReader.ts',
       commits: 2,
+      bugfixCommits: 1,
       linesAdded: 13,
       linesDeleted: 3,
       authors: ['Alice Smith', 'Bob Jones'],
@@ -26,6 +27,7 @@ function sampleMap(): ChurnMap {
     {
       path: 'README.md',
       commits: 1,
+      bugfixCommits: 1,
       linesAdded: 7,
       linesDeleted: 0,
       authors: ['Carol Lee'],
@@ -46,6 +48,8 @@ describe('serializeChurn / deserializeChurn', () => {
     const wire = JSON.parse(JSON.stringify(serializeChurn(original))) as SerializedChurnMap;
     const restored = deserializeChurn(wire);
     expect(restored).toEqual(original);
+    // Explicitly guard the S2-D bugfixCommits field survives the JSON round-trip.
+    expect(restored.get('src/core/gitReader.ts')?.bugfixCommits).toBe(1);
   });
 
   it('stamps the schema version on the serialized form', () => {

@@ -56,6 +56,19 @@ describe('parseGitLog (fixture aggregation)', () => {
     expect([...reader.authors].sort()).toEqual(['Alice Smith', 'Bob Jones']);
   });
 
+  it('counts bug-fix commits per file from the subject (%s)', () => {
+    // commit1 "fix null deref in parser" = bugfix; commit2 "add logo asset" = not.
+    // gitReader.ts touched by both → 1/2; types.ts only by commit1 → 1/1.
+    expect(expectChurn(map, 'src/core/gitReader.ts').bugfixCommits).toBe(1);
+    expect(expectChurn(map, 'src/core/types.ts').bugfixCommits).toBe(1);
+    // commit4 "fixes #42 broken link" = bugfix → README.md + lib/b.ts.
+    expect(expectChurn(map, 'README.md').bugfixCommits).toBe(1);
+    expect(expectChurn(map, 'lib/b.ts').bugfixCommits).toBe(1);
+    // commit2 "add logo asset" and commit3 "refactor util helpers" = not bugfixes.
+    expect(expectChurn(map, 'assets/logo.png').bugfixCommits).toBe(0);
+    expect(expectChurn(map, 'src/core/new/util.ts').bugfixCommits).toBe(0);
+  });
+
   it('tracks first/last seen by parsed timestamp, not lexically (mixed offsets)', () => {
     // commit2 (14:00+09:00 = 05:00 UTC) is chronologically EARLIER than commit1
     // (10:00 UTC) but its ISO string sorts LATER. A lexical min/max would flip
@@ -170,6 +183,10 @@ describe('readChurn (real git spawn — exercises the default runner end-to-end)
       expect(churn.commits).toBeGreaterThan(0);
       expect(Array.isArray(churn.authors)).toBe(true);
       expect(churn.authors.length).toBeGreaterThan(0);
+      // subject (%s) is now captured → bugfixCommits is a real count, 0..commits.
+      expect(typeof churn.bugfixCommits).toBe('number');
+      expect(churn.bugfixCommits).toBeGreaterThanOrEqual(0);
+      expect(churn.bugfixCommits).toBeLessThanOrEqual(churn.commits);
       // real commits have parseable dates
       expect(Number.isNaN(Date.parse(churn.lastSeen))).toBe(false);
     }
@@ -205,7 +222,7 @@ describe('resolveRenamePath', () => {
 describe('buildGitLogArgs', () => {
   it('requests the %x00 git token and contains NO real NUL byte in any arg', () => {
     const args = buildGitLogArgs({ repoRoot: '/r' });
-    expect(args).toContain('--format=%H%x00%an%x00%aI');
+    expect(args).toContain('--format=%H%x00%an%x00%aI%x00%s');
     // spawn rejects any argv element containing U+0000 — this is the core fix.
     expect(args.every((a) => !a.includes(NUL))).toBe(true);
   });

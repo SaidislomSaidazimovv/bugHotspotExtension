@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { isBugfixCommit, computeBugfixDensity } from '../../core/bugfix';
+import { isBugfixCommit, computeBugfixDensity, buildBugfixDensity } from '../../core/bugfix';
+import type { ChurnMap, FileChurn } from '../../core/types';
 
 describe('isBugfixCommit', () => {
   it('matches plain fix words (fix / fixes / fixed / bugfix)', () => {
@@ -69,5 +70,42 @@ describe('computeBugfixDensity', () => {
   it('returns 0 when totalCount is 0 (no division by zero)', () => {
     expect(computeBugfixDensity(0, 0)).toBe(0);
     expect(computeBugfixDensity(3, 0)).toBe(0);
+  });
+});
+
+describe('buildBugfixDensity', () => {
+  function fc(path: string, commits: number, bugfixCommits: number): FileChurn {
+    return {
+      path,
+      commits,
+      bugfixCommits,
+      linesAdded: 0,
+      linesDeleted: 0,
+      authors: [],
+      firstSeen: '',
+      lastSeen: '',
+    };
+  }
+
+  it('maps each path to bugfixCommits / commits', () => {
+    const churn: ChurnMap = new Map([
+      ['a.ts', fc('a.ts', 4, 2)], // 0.5
+      ['b.ts', fc('b.ts', 3, 0)], // 0
+      ['c.ts', fc('c.ts', 5, 5)], // 1
+    ]);
+    const density = buildBugfixDensity(churn);
+    expect(density.get('a.ts')).toBe(0.5);
+    expect(density.get('b.ts')).toBe(0);
+    expect(density.get('c.ts')).toBe(1);
+    expect([...density.keys()].sort()).toEqual(['a.ts', 'b.ts', 'c.ts']);
+  });
+
+  it('returns 0 density for a file with no commits (guarded division)', () => {
+    const churn: ChurnMap = new Map([['z.ts', fc('z.ts', 0, 0)]]);
+    expect(buildBugfixDensity(churn).get('z.ts')).toBe(0);
+  });
+
+  it('returns an empty map for an empty ChurnMap', () => {
+    expect(buildBugfixDensity(new Map())).toEqual(new Map());
   });
 });
