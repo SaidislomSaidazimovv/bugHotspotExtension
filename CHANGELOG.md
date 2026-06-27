@@ -4,6 +4,47 @@ All notable changes to the **Hotspot — Bug Hotspot Predictor** extension are d
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.4] — 2026-06-28
+
+### Added
+
+- **Recency signal (time-decay)** — the risk score now includes a sixth process signal:
+  recently-changed files rank higher. Each commit touching a file contributes
+  `0.5 ^ (ageDays / 365)` (a 365-day half-life), measured from the newest commit in the
+  history walk — so a file's risk cools off as its changes age.
+- **Trend badge** — each file in the Risk Report shows a trend arrow (↑ rising / → stable /
+  ↓ cooling) derived from the share of its commits in the last 90 days. Display-only — it
+  never affects the score.
+- **Low-confidence note** — when the git history is too thin to rank reliably (fewer than 5
+  scored files, or a top score under 15), the Risk Report and status bar now say so instead
+  of implying a confident ranking.
+- **Generated-file exclude globs** — `hotspot.exclude` keeps generated, vendored, and
+  lockfile paths (e.g. `dist/`, `node_modules/`, `*.min.js`, `package-lock.json`) out of the
+  ranking and out of coupling partners. Defaults to a sensible list; set to `[]` to disable.
+- **Per-region risk CodeLens** — an inline `⚠ Risk: <severity> · depth N · M lines` CodeLens
+  appears above risky code blocks, gated by `hotspot.codeRiskMinSeverity`. Toggle with
+  `hotspot.codeLensEnabled` (default `true`).
+- **Configurable scoring** — `hotspot.weights` (per-signal weights), `hotspot.thresholds`
+  (tier cutoffs), and `hotspot.sinceMonths` (limit history to the last N months, 0 = all).
+  Invalid or missing keys fall back to the built-in defaults; changes trigger a debounced
+  rescan.
+- **`Hotspot: Export Risk Report`** — export the current ranking as Markdown or JSON into a
+  new editor, for sharing or tracking risk over time.
+
+### Changed
+
+- The risk model now includes a recency signal and rebalanced weights, so file rankings
+  shift versus 0.0.3 — this is an accuracy improvement, not a regression. The additive core
+  is now six signals: `freq .22 / churn .18 / recency .20 / authors .10 / ownership .15 /
+  coupling .15` (sum 1.0), still shaped by the complexity multiplier and bug-fix density
+  booster.
+
+### Notes
+
+- The churn cache format bumps from v3 to v4 (per-file records gain `recencyWeight` +
+  `recentCommits`). Old caches are invalidated automatically, so the first scan after
+  upgrading does one cold rescan.
+
 ## [0.0.3] — 2026-06-27
 
 ### Added
@@ -67,6 +108,7 @@ Initial release.
 - Activation only in git workspaces (`workspaceContains:.git`).
 - 100% local and offline — no account, no network, no telemetry.
 
+[0.0.4]: https://github.com/SaidislomSaidazimovv/bugHotspotExtension/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/SaidislomSaidazimovv/bugHotspotExtension/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/SaidislomSaidazimovv/bugHotspotExtension/releases/tag/v0.0.2
 [0.0.1]: https://github.com/SaidislomSaidazimovv/bugHotspotExtension/releases/tag/v0.0.1
