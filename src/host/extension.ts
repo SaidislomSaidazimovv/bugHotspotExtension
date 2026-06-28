@@ -10,6 +10,7 @@ import { registerCodeRiskDecorations } from './codeRiskDecorations';
 import { registerCodeLens } from './codeLensProvider';
 import { registerExportReport } from './exportReport';
 import { registerWorkingSetLens } from './workingSetLens';
+import { registerTreemap } from './treemapView';
 
 // Thin host layer (ADR-1): analysis lives in `core/` (zero `vscode` imports);
 // this file only wires the service to VS Code commands and UI surfaces.
@@ -28,6 +29,7 @@ export function activate(context: vscode.ExtensionContext): void {
   registerCodeLens(context);
   registerExportReport(context, service);
   registerWorkingSetLens(context, service, repoRoot);
+  registerTreemap(context, service);
 
   context.subscriptions.push(
     // Return the promise so callers (and integration tests) can await results.

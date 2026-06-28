@@ -54,6 +54,12 @@
         "title": "Show Working-Set Risk Lens",
         "category": "Hotspot",
         "icon": "$(git-compare)"
+      },
+      {
+        "command": "hotspot.showTreemap",
+        "title": "Show Risk Treemap",
+        "category": "Hotspot",
+        "icon": "$(graph-scatter)"
       }
     ],
     "menus": {

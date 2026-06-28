@@ -1,0 +1,116 @@
+/* Risk Treemap (S9) — vanilla CSS, zero dependencies, zero remote resources.
+   Colors come from VS Code theme variables so the view follows the active theme. */
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+  color: var(--vscode-foreground);
+  background: var(--vscode-editor-background);
+  overflow: hidden;
+}
+
+#legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 12px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+}
+
+#legend .hint {
+  color: var(--vscode-descriptionForeground);
+}
+
+#legend .caveat {
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+  margin-left: auto;
+}
+
+#empty {
+  padding: 16px;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* The treemap fills the remaining viewport; tiles are absolutely positioned. */
+#treemap {
+  position: absolute;
+  top: 38px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+
+.tile {
+  position: absolute;
+  box-sizing: border-box;
+  overflow: hidden;
+  border: 1px solid var(--vscode-editor-background);
+}
+
+/* Folder tiles are just translucent frames; their leaves carry the color. */
+.tile.folder {
+  background: transparent;
+  border-color: var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+}
+
+.tile.folder > .label {
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.8;
+}
+
+.tile.file {
+  cursor: pointer;
+  color: var(--vscode-editor-background);
+}
+
+.tile.file:hover,
+.tile.file:focus {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: -2px;
+}
+
+.label {
+  display: block;
+  padding: 1px 3px;
+  font-size: 11px;
+  line-height: 1.3;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  pointer-events: none;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.35);
+}
+
+#tooltip {
+  position: absolute;
+  z-index: 10;
+  max-width: 360px;
+  padding: 6px 8px;
+  pointer-events: none;
+  background: var(--vscode-editorHoverWidget-background);
+  color: var(--vscode-editorHoverWidget-foreground);
+  border: 1px solid var(--vscode-editorHoverWidget-border, rgba(128, 128, 128, 0.5));
+  border-radius: 3px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  font-size: 12px;
+}
+
+#tooltip .tt-path {
+  font-weight: 600;
+  word-break: break-all;
+}
+
+#tooltip .tt-meta {
+  color: var(--vscode-descriptionForeground);
+  margin: 2px 0;
+}
+
+#tooltip .tt-line {
+  color: var(--vscode-descriptionForeground);
+}
