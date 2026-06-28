@@ -48,6 +48,12 @@
         "title": "Export Risk Report",
         "category": "Hotspot",
         "icon": "$(export)"
+      },
+      {
+        "command": "hotspot.showWorkingSet",
+        "title": "Show Working-Set Risk Lens",
+        "category": "Hotspot",
+        "icon": "$(git-compare)"
       }
     ],
     "menus": {
@@ -166,6 +172,11 @@
           "default": 0,
           "minimum": 0,
           "description": "Limit the git-history window to the last N months (0 = all history). Smaller windows emphasize recent activity and speed up the scan."
+        },
+        "hotspot.workingSet.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Working-Set Risk Lens: at diff/PR-review time, scope the already-computed risk scores to your current uncommitted changes and flag a strong co-change partner you haven't touched. Off by default; uses only local, read-only git (no network). Scores are a within-repo ranking, not probabilities."
         }
       }
     },
