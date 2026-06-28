@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import type { RiskResult } from '../../core/scorer';
 import { buildMarkdownReport, buildJsonReport } from '../../host/exportReport';
 import { trendBadge, confidenceNote } from '../../host/treeProvider';
+import { buildExplanations } from '../../core/explain';
 
 // @vscode/test-cli (Electron) integration tests for the S7-A2 host surface:
 // scoring settings, the export command, the trend badge, and the cold-start
@@ -62,6 +63,13 @@ suite('S7-A2 scoring settings (manifest)', () => {
     assert.strictEqual(since.default, 0, '0 = all history');
   });
 
+  test('hotspot.explainEnabled is a boolean default-true toggle (S8-A)', () => {
+    const explain = props['hotspot.explainEnabled'];
+    assert.ok(explain, 'hotspot.explainEnabled contributed');
+    assert.strictEqual(explain.type, 'boolean');
+    assert.strictEqual(explain.default, true, 'explainability is on by default but disable-able');
+  });
+
   test('hotspot.exportReport command is contributed', () => {
     assert.ok(
       commands.some((c) => c.command === 'hotspot.exportReport'),
@@ -104,6 +112,45 @@ suite('S7-A2 export report (pure builders)', () => {
     assert.ok(row.includes('src/a\\|b.ts'), 'the pipe in the path is backslash-escaped');
     // The data row still has exactly the 11 columns of the table (12 separators).
     assert.strictEqual((row.match(/(?<!\\)\|/g) ?? []).length, 12, 'row keeps its column count');
+  });
+});
+
+suite('S8-A risk explainability in the export (pure builders)', () => {
+  // Two files with distinct signals so the breakdown has a defined dominant.
+  const results = [
+    makeResult({ path: 'src/hot.ts', score: 80, tier: 'critical', signals: { freq: 100, churn: 50, recency: 9, authors: 4, ownership: 0.5, coupling: 0.3, complexity: 7 } }),
+    makeResult({ path: 'src/cool.ts', score: 5, tier: 'low', signals: { freq: 2, churn: 1, recency: 0, authors: 1, ownership: 0, coupling: 0, complexity: 0 } }),
+  ];
+  const explanations = buildExplanations(results);
+
+  test('Markdown gains a "Why" column naming the dominant driver when explanations are supplied', () => {
+    const md = buildMarkdownReport(results, explanations);
+    assert.match(md, /\| Complexity \| Why \|/, 'header has the trailing Why column');
+    // The hottest file is freq-dominant ⇒ its Why cell names freq with a % share.
+    const hotRow = md.split('\n').find((l) => l.includes('src/hot.ts'))!;
+    assert.match(hotRow, /\| freq \d+% \|$/, 'Why cell shows the dominant driver + share');
+  });
+
+  test('omitting explanations yields the byte-identical v0.0.4 table (no Why column)', () => {
+    const md = buildMarkdownReport(results);
+    assert.ok(!md.includes(' Why |'), 'no Why column without explanations');
+  });
+
+  test('JSON gains a per-file explanation object when explanations are supplied', () => {
+    const parsed = JSON.parse(buildJsonReport(results, explanations)) as Array<
+      RiskResult & { explanation: { shares: Record<string, number>; dominant: string | null; corePct: number; summary: string } }
+    >;
+    const hot = parsed.find((r) => r.path === 'src/hot.ts')!;
+    assert.ok(hot.explanation, 'explanation attached');
+    assert.strictEqual(hot.explanation.dominant, 'freq', 'dominant driver surfaced');
+    assert.match(hot.explanation.summary, /Mostly because/, 'plain-language summary present');
+    const shareSum = Object.values(hot.explanation.shares).reduce((a, b) => a + b, 0);
+    assert.ok(Math.abs(shareSum - 1) < 1e-9, 'shares sum to 100% of the core');
+  });
+
+  test('omitting explanations yields the raw results array (no explanation field)', () => {
+    const parsed = JSON.parse(buildJsonReport(results)) as Array<Record<string, unknown>>;
+    assert.ok(!('explanation' in parsed[0]), 'no explanation field without explanations');
   });
 });
 

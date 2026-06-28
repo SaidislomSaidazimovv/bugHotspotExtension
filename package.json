@@ -105,6 +105,11 @@
           "default": true,
           "description": "Show a per-region risk CodeLens (⚠ Risk: severity · depth · lines) above risky code blocks, gated by the same minimum severity as the gutter decorations."
         },
+        "hotspot.explainEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Explain *why* a file scored as it did: decompose its risk into each signal's % share and a plain-language dominant driver, shown in the Risk Report tooltip, the Show Top Hotspots quick pick, and the exported report. Turn off to hide the breakdown."
+        },
         "hotspot.exclude": {
           "type": "array",
           "items": { "type": "string" },

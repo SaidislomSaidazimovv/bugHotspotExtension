@@ -3,6 +3,11 @@ import * as path from 'node:path';
 
 import type { HotspotService } from './scanService';
 import type { RiskResult, RiskTier, RiskTrend } from '../core/scorer';
+import {
+  buildExplanations,
+  effectiveWeights,
+  type ExplanationView,
+} from '../core/explain';
 
 // "Risk Report" side-panel: a flat list of files ranked by hotspot score
 // (highest first). Backed by HotspotService.getResults(); refreshes on scan.
@@ -67,10 +72,37 @@ class RiskReportProvider implements vscode.TreeDataProvider<RiskResult> {
   private readonly _onDidChangeTreeData = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
+  /**
+   * Risk Explainability breakdown (S8-A), lazily built once per refresh and
+   * keyed by path. `undefined` ⇒ not yet computed for the current result set;
+   * an empty map ⇒ explainability is disabled. Recomputing once (not per row)
+   * keeps the whole-set `normalize` out of the O(N²) trap.
+   */
+  private explanations?: Map<string, ExplanationView>;
+
   constructor(private readonly service: HotspotService) {}
 
   refresh(): void {
+    this.explanations = undefined; // invalidate: rebuild against the new results
     this._onDidChangeTreeData.fire();
+  }
+
+  /** Build (and cache) the explanation breakdown for the current results, unless
+   *  `hotspot.explainEnabled` is off (then an empty map ⇒ no "why" block). */
+  private getExplanations(): Map<string, ExplanationView> {
+    if (this.explanations) {
+      return this.explanations;
+    }
+    const cfg = vscode.workspace.getConfiguration('hotspot');
+    const enabled = cfg.get<boolean>('explainEnabled', true);
+    this.explanations = enabled
+      ? buildExplanations(
+          this.service.getResults(),
+          effectiveWeights(cfg.get('weights')),
+          (p) => this.service.getCoupledFiles(p)[0]?.path,
+        )
+      : new Map();
+    return this.explanations;
   }
 
   getChildren(element?: RiskResult): RiskResult[] {
@@ -84,21 +116,31 @@ class RiskReportProvider implements vscode.TreeDataProvider<RiskResult> {
       vscode.TreeItemCollapsibleState.None,
     );
     item.description = `${result.score} · ${result.tier} ${trendBadge(result.trend)}`;
-    item.tooltip = new vscode.MarkdownString(
-      [
-        `**${result.path}**`,
-        '',
-        `Risk **${result.score}** · ${result.tier} _(relative ranking, not "% buggy")_`,
-        '',
-        `commits ${result.signals.freq} · churn ${result.signals.churn} · ` +
-          `authors ${result.signals.authors} · ` +
-          `ownership ${Math.round(result.signals.ownership * 100)}% fragmented · ` +
-          `coupling ${Math.round(result.signals.coupling * 100)}% · ` +
-          `complexity ${result.signals.complexity}`,
-        '',
-        `_${TREND_TOOLTIP[result.trend]}_`,
-      ].join('\n'),
-    );
+    const lines = [
+      `**${result.path}**`,
+      '',
+      `Risk **${result.score}** · ${result.tier} _(relative ranking, not "% buggy")_`,
+      '',
+      `commits ${result.signals.freq} · churn ${result.signals.churn} · ` +
+        `authors ${result.signals.authors} · ` +
+        `ownership ${Math.round(result.signals.ownership * 100)}% fragmented · ` +
+        `coupling ${Math.round(result.signals.coupling * 100)}% · ` +
+        `complexity ${result.signals.complexity}`,
+      '',
+      `_${TREND_TOOLTIP[result.trend]}_`,
+    ];
+    // Risk Explainability breakdown (S8-A): decompose the additive core into each
+    // signal's % share + a plain-language "why". Gated by `hotspot.explainEnabled`.
+    const explanation = this.getExplanations().get(result.path);
+    if (explanation) {
+      lines.push('', '**Why this score?**', explanation.sentence);
+      // Thin-history files (no dominant driver) have an all-"0%" breakdown line —
+      // show only the neutral sentence, omit the noisy "freq 0% · churn 0% · …".
+      if (explanation.dominant !== null) {
+        lines.push('', explanation.line);
+      }
+    }
+    item.tooltip = new vscode.MarkdownString(lines.join('\n'));
     item.iconPath = tierIcon(result.tier);
     item.contextValue = 'hotspotRisk';
 
@@ -149,6 +191,13 @@ export function registerRiskPanel(
     service.onDidUpdate(() => {
       provider.refresh();
       syncMessage();
+    }),
+    // Toggling the explainability setting changes the tooltip content but not the
+    // ranking, so refresh the tree (rebuilds the breakdown) without a rescan.
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('hotspot.explainEnabled')) {
+        provider.refresh();
+      }
     }),
   );
 }

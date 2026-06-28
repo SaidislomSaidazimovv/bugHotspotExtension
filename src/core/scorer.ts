@@ -128,7 +128,7 @@ export interface ScoreOptions {
 // RESEARCH §3.6 weighted model (sum = 1.0). S4-B1 split ownership + coupling into
 // their own terms; S7-B1 added the recency term and rebalanced freq/churn/authors
 // down to make room (0.30/0.25/0.15 → 0.22/0.18/0.10) while keeping the sum 1.0.
-const DEFAULT_WEIGHTS: ScoreWeights = {
+export const DEFAULT_WEIGHTS: ScoreWeights = {
   freq: 0.22,
   churn: 0.18,
   recency: 0.2,
@@ -146,8 +146,12 @@ function clamp(value: number, lo: number, hi: number): number {
  * Normalize a right-skewed signal: `log1p` to dampen the long tail, then
  * min–max to [0, 1]. When all values are equal (`max === min`, e.g. a single
  * file) there is no discriminating signal, so every value normalizes to 0.
+ *
+ * Exported so the Risk Explainability layer (S8-A, `core/explain.ts`) can
+ * re-derive each signal's normalized contribution from the SAME formula the
+ * scorer used — keeping the displayed "% share" breakdown faithful to the score.
  */
-function normalize(values: number[]): number[] {
+export function normalize(values: number[]): number[] {
   const logged = values.map((v) => Math.log1p(v));
   let min = Infinity;
   let max = -Infinity;

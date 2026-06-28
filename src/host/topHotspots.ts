@@ -2,6 +2,11 @@ import * as vscode from 'vscode';
 
 import type { HotspotService } from './scanService';
 import type { RiskResult } from '../core/scorer';
+import {
+  buildExplanations,
+  effectiveWeights,
+  type ExplanationView,
+} from '../core/explain';
 
 // "Top Hotspots" Quick Pick (S4-C): a fast jump-list to the riskiest files.
 // Read-only consumer of the FROZEN HotspotService contract — it only calls
@@ -42,10 +47,15 @@ function explain(result: RiskResult): string {
   return parts.join(' · ');
 }
 
-function toPick(result: RiskResult): HotspotPick {
+function toPick(result: RiskResult, explanation?: ExplanationView): HotspotPick {
   const s = result.signals;
   // Signal line mirrors the Risk Report panel tooltip (treeProvider.ts) so the
   // two surfaces agree — all five signals plus complexity.
+  // The activity summary (explain) is followed by the Risk Explainability "why"
+  // sentence (S8-A) — the weighted % shares — when explainability is enabled.
+  const detail = explanation
+    ? `${explain(result)} — ${explanation.sentence}`
+    : explain(result);
   return {
     label: `$(flame) ${result.score} · ${result.tier} — ${result.path}`,
     description:
@@ -54,7 +64,7 @@ function toPick(result: RiskResult): HotspotPick {
       `ownership ${Math.round(s.ownership * 100)}% fragmented · ` +
       `coupling ${Math.round(s.coupling * 100)}% · ` +
       `complexity ${s.complexity}`,
-    detail: explain(result),
+    detail,
     result,
   };
 }
@@ -118,10 +128,19 @@ export async function showTopHotspots(service: HotspotService): Promise<void> {
     return;
   }
 
-  const topN = vscode.workspace
-    .getConfiguration('hotspot')
-    .get<number>('topHotspotsCount', DEFAULT_TOP_N);
-  const items = results.slice(0, Math.max(1, topN)).map(toPick);
+  const cfg = vscode.workspace.getConfiguration('hotspot');
+  const topN = cfg.get<number>('topHotspotsCount', DEFAULT_TOP_N);
+  // Risk Explainability (S8-A): decompose over the FULL result set (the whole-set
+  // normalize needs every file), then attach each shown file's breakdown. Gated by
+  // `hotspot.explainEnabled`.
+  const explanations = cfg.get<boolean>('explainEnabled', true)
+    ? buildExplanations(results, effectiveWeights(cfg.get('weights')), (p) =>
+        service.getCoupledFiles(p)[0]?.path,
+      )
+    : undefined;
+  const items = results
+    .slice(0, Math.max(1, topN))
+    .map((r) => toPick(r, explanations?.get(r.path)));
 
   const picked = await vscode.window.showQuickPick(items, {
     title: 'Top Hotspots',
