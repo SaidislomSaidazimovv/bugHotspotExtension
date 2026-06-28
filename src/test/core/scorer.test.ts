@@ -52,6 +52,15 @@ function run(churn: ChurnMap, cxm: Map<string, ComplexityResult>, opts?: ScoreOp
   return { results, byPath };
 }
 
+describe('computeRisk — trend edge cases', () => {
+  it('classifies a zero-commit (malformed/empty) file as stable, not cooling', () => {
+    const churn = churnMap([{ path: 'z.ts', commits: 0, added: 0, deleted: 0, authors: 0 }]);
+    const { byPath } = run(churn, new Map());
+    // commits=0 → ratio 0 would hit the cooling rule (≤0.1); the guard makes it stable.
+    expect(byPath.get('z.ts')?.trend).toBe('stable');
+  });
+});
+
 describe('computeRisk — ranking', () => {
   it('ranks a frequently-changed, complex file above a quiet, simple one', () => {
     const churn = churnMap([

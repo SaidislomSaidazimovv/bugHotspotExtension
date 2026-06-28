@@ -7,14 +7,24 @@ import { computeCodeRisk, type CodeRiskSeverity } from '../core/codeRisk';
 // This is the README roadmap item "Per-function risk via CodeLens". Read-only
 // consumer of the FROZEN `computeCodeRisk` — ZERO core edits. Complements the
 // gutter decorations (S6-B2): the lens names the risk where the cursor reads
-// code, the gutter tints the lines. Respects the same gate as the decorations
-// (`hotspot.codeRiskMinSeverity`) plus its own `hotspot.codeLensEnabled` toggle.
+// code, the gutter tints the lines. Gated by the shared `hotspot.codeRiskEnabled`
+// master switch and `hotspot.codeRiskMinSeverity` (same as the decorations), plus
+// its own `hotspot.codeLensEnabled` toggle.
 
 /** Ordering for the `>= minSeverity` gate (mirrors codeRiskDecorations). */
 const RANK: Record<CodeRiskSeverity, number> = { low: 0, medium: 1, high: 2, critical: 3 };
 
 function getEnabled(): boolean {
   return vscode.workspace.getConfiguration('hotspot').get<boolean>('codeLensEnabled', true);
+}
+
+/**
+ * The shared code-risk master switch (`hotspot.codeRiskEnabled`, default true) —
+ * the same gate the gutter/hover decorations honor. Turning it off suppresses ALL
+ * code-risk surfaces, the lens included, so the two never disagree.
+ */
+function getCodeRiskEnabled(): boolean {
+  return vscode.workspace.getConfiguration('hotspot').get<boolean>('codeRiskEnabled', true);
 }
 
 function getMinSeverity(): CodeRiskSeverity {
@@ -52,7 +62,7 @@ class CodeRiskCodeLensProvider implements vscode.CodeLensProvider {
   readonly onDidChangeCodeLenses = this._onDidChange.event;
 
   provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
-    if (!getEnabled() || document.uri.scheme !== 'file') {
+    if (!getEnabled() || !getCodeRiskEnabled() || document.uri.scheme !== 'file') {
       return [];
     }
     return buildCodeLenses(document, getMinSeverity());
@@ -70,7 +80,8 @@ class CodeRiskCodeLensProvider implements vscode.CodeLensProvider {
 
 /**
  * Register the per-region risk CodeLens provider over `file:` documents. Refreshes
- * when `hotspot.codeLensEnabled` / `hotspot.codeRiskMinSeverity` change.
+ * when `hotspot.codeLensEnabled` / `hotspot.codeRiskEnabled` /
+ * `hotspot.codeRiskMinSeverity` change.
  */
 export function registerCodeLens(context: vscode.ExtensionContext): void {
   const provider = new CodeRiskCodeLensProvider();
@@ -80,6 +91,7 @@ export function registerCodeLens(context: vscode.ExtensionContext): void {
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (
         e.affectsConfiguration('hotspot.codeLensEnabled') ||
+        e.affectsConfiguration('hotspot.codeRiskEnabled') ||
         e.affectsConfiguration('hotspot.codeRiskMinSeverity')
       ) {
         provider.refresh();

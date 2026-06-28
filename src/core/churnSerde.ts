@@ -63,14 +63,24 @@ export function deserializeChurn(
   for (const file of data.files) {
     if (file && typeof file.path === 'string') {
       // Defensive defaults: a current-version entry should carry these, but guard
-      // a partially-written / hand-edited cache so downstream code never sees
-      // `undefined`. `authorCommits` → [] (ownershipStats reports zero
-      // fragmentation); `recencyWeight`/`recentCommits` → 0 (recency term + trend
-      // degrade to no-signal). Cache-version mismatch already cold-scans; this is
+      // a partially-written / corrupt same-version cache row so downstream code
+      // never sees `undefined`. EVERY numeric/array field the scorer & signal
+      // builders dereference is defaulted — `commits`/`lines` → 0 (so `log1p`
+      // never sees `undefined` → NaN), `authors`/`authorCommits` → [] (so
+      // `authors.length` and ownership never throw), `recencyWeight`/
+      // `recentCommits` → 0 (recency term + trend degrade to no-signal). Date
+      // strings default to ''. Cache-version mismatch already cold-scans; this is
       // belt-and-braces for a same-version-but-malformed row.
       churn.set(file.path, {
         ...file,
+        commits: typeof file.commits === 'number' ? file.commits : 0,
+        bugfixCommits: typeof file.bugfixCommits === 'number' ? file.bugfixCommits : 0,
+        linesAdded: typeof file.linesAdded === 'number' ? file.linesAdded : 0,
+        linesDeleted: typeof file.linesDeleted === 'number' ? file.linesDeleted : 0,
+        authors: Array.isArray(file.authors) ? file.authors : [],
         authorCommits: Array.isArray(file.authorCommits) ? file.authorCommits : [],
+        firstSeen: typeof file.firstSeen === 'string' ? file.firstSeen : '',
+        lastSeen: typeof file.lastSeen === 'string' ? file.lastSeen : '',
         recencyWeight: typeof file.recencyWeight === 'number' ? file.recencyWeight : 0,
         recentCommits: typeof file.recentCommits === 'number' ? file.recentCommits : 0,
       });

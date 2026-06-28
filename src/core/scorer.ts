@@ -176,7 +176,11 @@ function toTier(score: number, t: ScoreThresholds): RiskTier {
  * display-only — never feeds the score.
  */
 function toTrend(recentCommits: number, commits: number): RiskTrend {
-  const ratio = commits > 0 ? recentCommits / commits : 0;
+  // No history → neutral. Guard FIRST so a 0-commit (malformed/empty) file is not
+  // mislabeled 'cooling' by the ratio≤0.1 rule below. Unreachable from real churn
+  // (aggregated files have commits ≥ 1), but keeps the classifier total.
+  if (commits <= 0) return 'stable';
+  const ratio = recentCommits / commits;
   if (ratio >= 0.5 && commits >= 3) return 'rising';
   if (ratio <= 0.1) return 'cooling';
   return 'stable';

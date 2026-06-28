@@ -13,6 +13,13 @@ const TREND_LABEL: Record<RiskResult['trend'], string> = {
   cooling: '↓ cooling',
 };
 
+/** Escape a free-form value for a Markdown table cell — a literal `|` would
+ *  otherwise split the row and corrupt every column after it. Paths are the only
+ *  user-controlled cell (a filename may contain `|` on Linux/macOS). */
+function mdCell(s: string): string {
+  return s.replace(/\|/g, '\\|');
+}
+
 /** Markdown report: a ranked table + a one-line framing note. Pure; exported for tests. */
 export function buildMarkdownReport(results: readonly RiskResult[]): string {
   const lines = [
@@ -26,7 +33,7 @@ export function buildMarkdownReport(results: readonly RiskResult[]): string {
   ];
   results.forEach((r, i) => {
     lines.push(
-      `| ${i + 1} | ${r.path} | ${r.score} | ${r.tier} | ${TREND_LABEL[r.trend]} | ` +
+      `| ${i + 1} | ${mdCell(r.path)} | ${r.score} | ${r.tier} | ${TREND_LABEL[r.trend]} | ` +
         `${r.signals.freq} | ${r.signals.churn} | ${r.signals.authors} | ` +
         `${Math.round(r.signals.ownership * 100)}% | ${Math.round(r.signals.coupling * 100)}% | ` +
         `${r.signals.complexity} |`,

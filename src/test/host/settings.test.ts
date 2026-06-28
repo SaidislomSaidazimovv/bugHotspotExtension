@@ -95,6 +95,16 @@ suite('S7-A2 export report (pure builders)', () => {
     assert.strictEqual(parsed[0].path, 'src/a.ts');
     assert.strictEqual(parsed[0].score, 80);
   });
+
+  test('Markdown escapes a pipe in a path so the table row cannot break', () => {
+    // A filename may contain `|` on Linux/macOS; an unescaped `|` would split the
+    // row and corrupt every column after the path.
+    const md = buildMarkdownReport([makeResult({ path: 'src/a|b.ts', score: 50 })]);
+    const row = md.split('\n').find((l) => l.includes('a') && l.startsWith('| 1 |'))!;
+    assert.ok(row.includes('src/a\\|b.ts'), 'the pipe in the path is backslash-escaped');
+    // The data row still has exactly the 11 columns of the table (12 separators).
+    assert.strictEqual((row.match(/(?<!\\)\|/g) ?? []).length, 12, 'row keeps its column count');
+  });
 });
 
 suite('S7-A2 trend badge + confidence note (pure)', () => {

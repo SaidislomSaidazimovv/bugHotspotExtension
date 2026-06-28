@@ -186,6 +186,8 @@ class HotspotServiceImpl implements HotspotService {
   private byPath = new Map<string, RiskResult>();
   private coupledPartners = new Map<string, CoupledFile[]>();
   private scanning: Promise<RiskResult[]> | undefined;
+  /** Set when a scan is requested while one is already in flight (see {@link scan}). */
+  private rerunRequested = false;
 
   private readonly _onDidUpdate = new vscode.EventEmitter<RiskResult[]>();
   readonly onDidUpdate = this._onDidUpdate.event;
@@ -208,14 +210,30 @@ class HotspotServiceImpl implements HotspotService {
   }
 
   scan(token?: vscode.CancellationToken): Promise<RiskResult[]> {
-    // Coalesce concurrent scans (e.g. activation pre-warm + manual command).
+    // Coalesce concurrent scans (e.g. activation pre-warm + manual command). But
+    // the in-flight scan already sampled the config (weights/thresholds/exclude/
+    // sinceMonths) before this call, so a settings change that arrives mid-scan
+    // would otherwise be silently lost. Remember it and run exactly one trailing
+    // rescan when the current scan settles, so live config edits always take
+    // effect even when the git walk outruns the 500 ms config-change debounce.
     if (this.scanning) {
+      this.rerunRequested = true;
       return this.scanning;
     }
-    this.scanning = this.runScan(token).finally(() => {
+    const run = this.runScan(token).finally(() => {
       this.scanning = undefined;
     });
-    return this.scanning;
+    this.scanning = run;
+    const drainRerun = () => {
+      if (this.rerunRequested) {
+        this.rerunRequested = false;
+        void this.scan();
+      }
+    };
+    // Drain on settle (success OR failure); rerunRequested is only set by a fresh
+    // scan() during flight, so this fires at most one trailing rescan per request.
+    run.then(drainRerun, drainRerun);
+    return run;
   }
 
   private async runScan(token?: vscode.CancellationToken): Promise<RiskResult[]> {

@@ -135,6 +135,33 @@ describe('serializeChurn / deserializeChurn', () => {
     expect(deserializeChurn(wire).churn.get('x.ts')?.authorCommits).toEqual([]);
   });
 
+  it('defaults EVERY dereferenced field on a same-version row carrying only a path', () => {
+    // A corrupt same-version row with nothing but `path` must not leave any field
+    // `undefined`, or the scorer/signal builders would throw or produce NaN.
+    const wire = {
+      version: CHURN_SERDE_VERSION,
+      files: [{ path: 'only-path.ts' }],
+      coChange: [],
+    } as unknown as SerializedChurnMap;
+    const fc = deserializeChurn(wire).churn.get('only-path.ts');
+    expect(fc).toMatchObject({
+      path: 'only-path.ts',
+      commits: 0,
+      bugfixCommits: 0,
+      linesAdded: 0,
+      linesDeleted: 0,
+      authors: [],
+      authorCommits: [],
+      firstSeen: '',
+      lastSeen: '',
+      recencyWeight: 0,
+      recentCommits: 0,
+    });
+    // No field the scorer touches is left undefined.
+    expect(fc!.authors.length).toBe(0);
+    expect(Number.isFinite(fc!.commits + fc!.linesAdded + fc!.linesDeleted)).toBe(true);
+  });
+
   it('tolerates a missing / malformed coChange array', () => {
     const noCoChange = {
       version: CHURN_SERDE_VERSION,
